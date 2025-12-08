@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual env
+venv/
+
+# Config
+instance/
+config.yml
+tac_plus-ng.cfg
+
+# Logs
+*.log
