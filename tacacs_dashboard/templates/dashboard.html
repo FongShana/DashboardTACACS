@@ -1,5 +1,84 @@
 {% extends "base.html" %}
+
+{% block title %}Dashboard | NT TACACS+{% endblock %}
+{% block header %}Dashboard Overview{% endblock %}
+
 {% block content %}
-  <h2>Dashboard Overview</h2>
-  <p>Welcome to NT TACACS+ Dashboard (Prototype).</p>
+
+  <section class="section">
+    <h2 class="section-title">System Summary</h2>
+
+    <div class="card-grid">
+      <div class="card">
+        <div class="card-label">Active TACACS+ Users (Today)</div>
+        <div class="card-value">12</div>
+        <div class="card-sub">จำนวนบัญชีที่มีการ login ผ่าน TACACS+ ภายในวันนี้ (ตัวอย่าง)</div>
+      </div>
+
+      <div class="card">
+        <div class="card-label">Failed Login Attempts</div>
+        <div class="card-value card-value-danger">5</div>
+        <div class="card-sub">จำนวนนับจาก TACACS+ Accounting (ตัวอย่าง)</div>
+      </div>
+
+      <div class="card">
+        <div class="card-label">Registered OLT Devices</div>
+        <div class="card-value">3</div>
+        <div class="card-sub">ZTE 2 ตัว, Huawei 1 ตัว (ตัวอย่าง)</div>
+      </div>
+
+      <div class="card">
+        <div class="card-label">Roles / Privilege Profiles</div>
+        <div class="card-value">4</div>
+        <div class="card-sub">OLT_VIEW, OLT_OP, OLT_ENGINEER, OLT_ADMIN</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2 class="section-title">Recent Security Events (Sample)</h2>
+
+    <div class="table-wrapper">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>User</th>
+            <th>Role</th>
+            <th>Device</th>
+            <th>Action</th>
+            <th>Result</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>2025-12-09 09:12</td>
+            <td>eng_bkk</td>
+            <td>OLT_ENGINEER</td>
+            <td>OLT_ZTE_BTG1</td>
+            <td>login</td>
+            <td class="status-ok">success</td>
+          </tr>
+          <tr>
+            <td>2025-12-09 09:08</td>
+            <td>tech01</td>
+            <td>OLT_OP</td>
+            <td>OLT_ZTE_BTG1</td>
+            <td>command: <code>ont reset 1 1</code></td>
+            <td class="status-ok">success</td>
+          </tr>
+          <tr>
+            <td>2025-12-09 08:55</td>
+            <td>guest01</td>
+            <td>-</td>
+            <td>OLT_HW_SITEA</td>
+            <td>login</td>
+            <td class="status-fail">failed</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
 {% endblock %}
+

@@ -2,18 +2,48 @@
 <html lang="en">
   <head>
     <meta charset="utf-8">
-    <title>NT TACACS+ Dashboard</title>
+    <title>{% block title %}NT TACACS+ Dashboard{% endblock %}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
   </head>
   <body>
-    <header>
-      <h1>NT TACACS+ Access Control</h1>
-    </header>
-    <nav>
-      <!-- Add menu here -->
-    </nav>
-    <main>
-      {% block content %}{% endblock %}
-    </main>
+    <div class="layout">
+      <!-- Sidebar -->
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <div class="logo-circle">NT</div>
+          <div class="sidebar-title">TACACS+<br>Access Control</div>
+        </div>
+
+        <nav class="sidebar-nav">
+          <a href="/" class="nav-item nav-item-active">Dashboard</a>
+          <a href="#" class="nav-item">Users &amp; Roles</a>
+          <a href="#" class="nav-item">Devices / OLT</a>
+          <a href="#" class="nav-item">Logs &amp; Audit</a>
+          <a href="#" class="nav-item">Settings</a>
+        </nav>
+
+        <div class="sidebar-footer">
+          <div class="sidebar-user">
+            <div class="user-avatar">A</div>
+            <div class="user-info">
+              <div class="user-name">admin</div>
+              <div class="user-role">NT NOC</div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Main content -->
+      <div class="main">
+        <header class="topbar">
+          <h1 class="topbar-title">{% block header %}Dashboard{% endblock %}</h1>
+        </header>
+
+        <main class="content">
+          {% block content %}{% endblock %}
+        </main>
+      </div>
+    </div>
   </body>
 </html>
