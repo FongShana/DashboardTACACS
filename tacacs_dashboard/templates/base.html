@@ -18,6 +18,7 @@
         <nav class="sidebar-nav">
            <a href="{{ url_for('dashboard.index') }}" class="nav-item {% if active_page=='dashboard' %}nav-item-active{% endif %}">Dashboard</a>
            <a href="{{ url_for('users.index') }}" class="nav-item {% if active_page=='users' %}nav-item-active{% endif %}">Users &amp; Roles</a>
+           <a href="{{ url_for('devices.index') }}" class="nav-item {% if active_page=='devices' %}nav-item-active{% endif %}">Devices / OLT</a>
         </nav>
 
         <div class="sidebar-footer">

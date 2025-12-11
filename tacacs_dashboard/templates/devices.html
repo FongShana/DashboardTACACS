@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block title %}Devices / OLT | NT TACACS+{% endblock %}
+{% block header %}Devices / OLT{% endblock %}
+
+{% block content %}
+<section class="section">
+  <h2 class="section-title">Registered Devices</h2>
+  <div class="card-grid">
+    <div class="card">
+      <div class="card-label">Total Devices</div>
+      <div class="card-value">{{ devices|length }}</div>
+      <div class="card-sub">อุปกรณ์ OLT ที่ลงทะเบียนในระบบ (dummy)</div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <h2 class="section-title">Devices List</h2>
+  <div class="table-wrapper">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Vendor</th>
+          <th>Mgmt IP</th>
+          <th>Site</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in devices %}
+        <tr>
+          <td>{{ d.name }}</td>
+          <td>{{ d.vendor }}</td>
+          <td>{{ d.ip }}</td>
+          <td>{{ d.site }}</td>
+          <td>{{ d.status }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}
