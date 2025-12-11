@@ -17,6 +17,7 @@
 
         <nav class="sidebar-nav">
            <a href="{{ url_for('dashboard.index') }}" class="nav-item {% if active_page=='dashboard' %}nav-item-active{% endif %}">Dashboard</a>
+           <a href="{{ url_for('users.index') }}" class="nav-item {% if active_page=='users' %}nav-item-active{% endif %}">Users &amp; Roles</a>
         </nav>
 
         <div class="sidebar-footer">

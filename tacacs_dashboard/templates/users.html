@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+
+{% block title %}Users & Roles | NT TACACS+{% endblock %}
+{% block header %}Users &amp; Roles{% endblock %}
+
+{% block content %}
+<section class="section">
+  <h2 class="section-title">Summary</h2>
+  <div class="card-grid">
+    <div class="card">
+      <div class="card-label">Total Users</div>
+      <div class="card-value">{{ users|length }}</div>
+      <div class="card-sub">จำนวนบัญชีที่เชื่อมกับ TACACS+ (ตัวอย่าง)</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Total Roles</div>
+      <div class="card-value">{{ roles|length }}</div>
+      <div class="card-sub">Profiles สำหรับ RBAC</div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <h2 class="section-title">Users</h2>
+  <div class="table-wrapper">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Username</th>
+          <th>Roles</th>
+          <th>Status</th>
+          <th>Last Login</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in users %}
+        <tr>
+          <td>{{ u.username }}</td>
+          <td>{{ u.roles }}</td>
+          <td>{{ u.status }}</td>
+          <td>{{ u.last_login }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="section">
+  <h2 class="section-title">Roles / Privilege Profiles</h2>
+  <div class="table-wrapper">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Role</th>
+          <th>Description</th>
+          <th>Privilege</th>
+          <th>Members</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in roles %}
+        <tr>
+          <td>{{ r.name }}</td>
+          <td>{{ r.description }}</td>
+          <td>{{ r.privilege }}</td>
+          <td>{{ r.members }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}
