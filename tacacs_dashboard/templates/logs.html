@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block title %}Logs & Audit | NT TACACS+{% endblock %}
+{% block header %}Logs &amp; Audit{% endblock %}
+
+{% block content %}
+<section class="section">
+  <h2 class="section-title">Filter (Sample)</h2>
+  <div class="card">
+    <form class="filter-form">
+      <div class="card-sub">ตรงนี้อนาคตจะเชื่อมกับ query จริง ตอนนี้เป็น layout ไว้ก่อน</div>
+    </form>
+  </div>
+</section>
+
+<section class="section">
+  <h2 class="section-title">Events</h2>
+  <div class="table-wrapper">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>User</th>
+          <th>Role</th>
+          <th>Device</th>
+          <th>Action</th>
+          <th>Result</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in events %}
+        <tr>
+          <td>{{ e.time }}</td>
+          <td>{{ e.user }}</td>
+          <td>{{ e.role }}</td>
+          <td>{{ e.device }}</td>
+          <td>{{ e.action }}</td>
+          <td class="{{ 'status-ok' if e.result == 'success' else 'status-fail' }}">
+            {{ e.result }}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}
