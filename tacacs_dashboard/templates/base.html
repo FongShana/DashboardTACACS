@@ -16,11 +16,7 @@
         </div>
 
         <nav class="sidebar-nav">
-          <a href="/" class="nav-item nav-item-active">Dashboard</a>
-          <a href="#" class="nav-item">Users &amp; Roles</a>
-          <a href="#" class="nav-item">Devices / OLT</a>
-          <a href="#" class="nav-item">Logs &amp; Audit</a>
-          <a href="#" class="nav-item">Settings</a>
+           <a href="{{ url_for('dashboard.index') }}" class="nav-item {% if active_page=='dashboard' %}nav-item-active{% endif %}">Dashboard</a>
         </nav>
 
         <div class="sidebar-footer">
