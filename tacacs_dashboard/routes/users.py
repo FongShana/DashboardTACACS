@@ -5,7 +5,7 @@ bp = Blueprint("users", __name__)
 
 @bp.route("/")
 def index():
-    # dummy
+    
     policy = load_policy()
     users = policy.get("users", [])
     roles = policy.get("roles", [])
