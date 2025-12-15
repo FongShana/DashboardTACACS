@@ -1,6 +1,7 @@
 from flask import Blueprint, jsonify, request
 from tacacs_dashboard.services.log_parser import get_recent_events, get_summary, get_all_events
 from tacacs_dashboard.services.policy_store import load_policy
+from tacacs_dashboard.services.tacacs_config import build_config_text
 
 bp = Blueprint("api", __name__)
 
@@ -49,3 +50,8 @@ def api_roles():
 @bp.get("/devices")
 def api_devices():
     return jsonify(load_policy().get("devices", []))
+
+@bp.get("/tacacs/config/preview")
+def api_tacacs_config_preview():
+    text = build_config_text()
+    return jsonify({"config": text})
