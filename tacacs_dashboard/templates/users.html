@@ -4,6 +4,35 @@
 {% block header %}Users &amp; Roles{% endblock %}
 
 {% block content %}
+
+<h2 class="mb-3">Add User</h2>
+<form method="post" action="{{ url_for('users.create_user_form') }}" class="mb-4">
+  <div>
+    <label>Username</label>
+    <input type="text" name="username" required>
+  </div>
+
+  <div>
+    <label>Role</label>
+    <select name="role" required>
+      {% for role in roles %}
+      <option value="{{ role.name }}">{{ role.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div>
+    <label>Status</label>
+    <select name="status">
+      <option value="Active">Active</option>
+      <option value="Disabled">Disabled</option>
+    </select>
+  </div>
+
+  <button type="submit">Add User</button>
+</form>
+
+
 <section class="section">
   <h2 class="section-title">Summary</h2>
   <div class="card-grid">
@@ -33,12 +62,18 @@
         </tr>
       </thead>
       <tbody>
-        {% for u in users %}
         <tr>
-          <td>{{ u.username }}</td>
-          <td>{{ u.roles }}</td>
-          <td>{{ u.status }}</td>
-          <td>{{ u.last_login }}</td>
+          <td>{{ user.username }}</td>
+          <td>{{ user.roles }}</td>
+          <td>{{ user.status }}</td>
+          <td>{{ user.last_login }}</td>
+          <td>
+            <form method="post" action="{{ url_for('users.delete_user_form', username=user.username) }}">
+              <button type="submit" onclick="return confirm('ลบผู้ใช้ {{ user.username }} ?')">
+                Delete
+              </button>
+            </form>
+          </td>
         </tr>
         {% endfor %}
       </tbody>
