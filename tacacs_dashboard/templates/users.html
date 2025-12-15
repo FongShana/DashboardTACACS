@@ -5,6 +5,17 @@
 
 {% block content %}
 
+{# แสดง flash message ถ้ามี #}
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="flash-container">
+    {% for category, message in messages %}
+      <div class="flash flash-{{ category }}">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+
 <h2 class="mb-3">Add User</h2>
 <form method="post" action="{{ url_for('users.create_user_form') }}" class="mb-4">
   <div>
@@ -32,14 +43,13 @@
   <button type="submit">Add User</button>
 </form>
 
-
 <section class="section">
   <h2 class="section-title">Summary</h2>
   <div class="card-grid">
     <div class="card">
       <div class="card-label">Total Users</div>
       <div class="card-value">{{ users|length }}</div>
-      <div class="card-sub">จำนวนบัญชีที่เชื่อมกับ TACACS+ (ตัวอย่าง)</div>
+      <div class="card-sub">จำนวนบัญชีที่จัดการผ่าน TACACS+ (จาก policy.json)</div>
     </div>
     <div class="card">
       <div class="card-label">Total Roles</div>
@@ -59,9 +69,11 @@
           <th>Roles</th>
           <th>Status</th>
           <th>Last Login</th>
+          <th>Actions</th>
         </tr>
       </thead>
       <tbody>
+        {% for user in users %}
         <tr>
           <td>{{ user.username }}</td>
           <td>{{ user.roles }}</td>
@@ -74,6 +86,10 @@
               </button>
             </form>
           </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="5">ยังไม่มีผู้ใช้ในระบบ</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -101,9 +117,15 @@
           <td>{{ r.privilege }}</td>
           <td>{{ r.members }}</td>
         </tr>
+        {% else %}
+        <tr>
+          <td colspan="4">ยังไม่มี role ในระบบ</td>
+        </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
 </section>
+
 {% endblock %}
+
