@@ -1,0 +1,14 @@
+{
+  "users": [
+    { "username": "eng_bkk", "full_name": "Engineer BKK", "role": "OLT_ENGINEER", "enabled": true },
+    { "username": "view01", "full_name": "Viewer", "role": "OLT_VIEW", "enabled": true }
+  ],
+  "roles": [
+    { "name": "OLT_ENGINEER", "priv_level": 15, "description": "Full access on OLT", "allowed_commands": ["ont reset", "show interface *"] },
+    { "name": "OLT_VIEW", "priv_level": 1, "description": "Read-only", "allowed_commands": ["show *"] }
+  ],
+  "devices": [
+    { "id": 1, "name": "OLT_ZTE_BTG1", "vendor": "ZTE", "ip": "10.235.xxx.xxx", "site": "BTG", "enabled": true },
+    { "id": 2, "name": "OLT_HW_SITEA", "vendor": "Huawei", "ip": "10.235.xxx.xxx", "site": "SITEA", "enabled": true }
+  ]
+}

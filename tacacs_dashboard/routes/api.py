@@ -1,5 +1,6 @@
 from flask import Blueprint, jsonify, request
 from tacacs_dashboard.services.log_parser import get_recent_events, get_summary, get_all_events
+from tacacs_dashboard.services.policy_store import load_policy
 
 bp = Blueprint("api", __name__)
 
@@ -32,3 +33,19 @@ def api_logs_all():
     """
     events = get_all_events()
     return jsonify(events)
+
+@bp.get("/policy")
+def api_policy_all():
+    return jsonify(load_policy())
+
+@bp.get("/users")
+def api_users():
+    return jsonify(load_policy().get("users", []))
+
+@bp.get("/roles")
+def api_roles():
+    return jsonify(load_policy().get("roles", []))
+
+@bp.get("/devices")
+def api_devices():
+    return jsonify(load_policy().get("devices", []))
