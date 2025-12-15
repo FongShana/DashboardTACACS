@@ -224,3 +224,80 @@ def api_delete_device(name):
 
     return jsonify({"message": f"device '{name}' ถูกลบแล้ว"})
 
+# -----------------------
+# Policy: Roles (CRUD basic)
+# -----------------------
+
+@bp.post("/roles")
+def api_create_role():
+    """
+    เพิ่ม role ใหม่ลงใน policy.json
+
+    ตัวอย่าง JSON:
+    {
+      "name": "OLT_READONLY",
+      "description": "สิทธิ์ดูอย่างเดียว",
+      "privilege": "1 / read-only"
+    }
+    """
+    data = request.get_json(silent=True) or {}
+    name = data.get("name")
+    description = data.get("description", "")
+    privilege = data.get("privilege", "")
+
+    if not name:
+        return jsonify({
+            "error": "name เป็นฟิลด์จำเป็น"
+        }), 400
+
+    policy = load_policy()
+    roles = policy.get("roles", [])
+
+    # กันชื่อ role ซ้ำ
+    if any(r.get("name") == name for r in roles):
+        return jsonify({
+            "error": f"role '{name}' มีอยู่แล้ว"
+        }), 409
+
+    role = {
+        "name": name,
+        "description": description,
+        "privilege": privilege,
+        "members": 0   # เริ่มต้นยังไม่มี user ผูก
+    }
+
+    roles.append(role)
+    policy["roles"] = roles
+    save_policy(policy)
+
+    return jsonify(role), 201
+
+@bp.delete("/roles/<name>")
+def api_delete_role(name):
+    """
+    ลบ role ตาม name จาก policy.json
+    ถ้ามี user ใช้ role นี้อยู่ จะไม่ให้ลบ
+    """
+    policy = load_policy()
+    roles = policy.get("roles", [])
+    users = policy.get("users", [])
+
+    # เช็คก่อนว่า role นี้มี user ผูกอยู่ไหม
+    used_by = [u.get("username") for u in users if u.get("roles") == name or u.get("role") == name]
+    if used_by:
+        return jsonify({
+            "error": f"role '{name}' ยังถูกใช้งานโดย users: {', '.join(used_by)}",
+            "hint": "เปลี่ยน role ของ users เหล่านี้ก่อน แล้วค่อยลบ role"
+        }), 400
+
+    new_roles = [r for r in roles if r.get("name") != name]
+
+    if len(new_roles) == len(roles):
+        return jsonify({
+            "error": f"role '{name}' ไม่พบในระบบ"
+        }), 404
+
+    policy["roles"] = new_roles
+    save_policy(policy)
+
+    return jsonify({"message": f"role '{name}' ถูกลบแล้ว"})
