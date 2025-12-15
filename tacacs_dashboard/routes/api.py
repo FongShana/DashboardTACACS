@@ -133,3 +133,94 @@ def api_delete_user(username):
     save_policy(policy)
 
     return jsonify({"message": f"user '{username}' deleted"})
+
+# -----------------------
+# Policy: Devices (CRUD basic)
+# -----------------------
+
+def _is_valid_ipv4(ip: str) -> bool:
+    """เช็คว่าเป็น IPv4 รูปแบบง่าย ๆ"""
+    parts = ip.split(".")
+    if len(parts) != 4:
+        return False
+    try:
+        nums = [int(p) for p in parts]
+    except ValueError:
+        return False
+    return all(0 <= n <= 255 for n in nums)
+
+
+@bp.post("/devices")
+def api_create_device():
+    """
+    เพิ่ม device ใหม่ลงใน policy.json
+
+    ตัวอย่าง JSON:
+    {
+      "name": "OLT_ZTE_BTG3",
+      "vendor": "ZTE",
+      "ip": "10.235.110.30",
+      "site": "SITE-C",
+      "status": "Online"
+    }
+    """
+    data = request.get_json(silent=True) or {}
+    name = data.get("name")
+    vendor = data.get("vendor", "Unknown")
+    ip = data.get("ip")
+    site = data.get("site", "-")
+    status = data.get("status", "Unknown")
+
+    if not name or not ip:
+        return jsonify({
+            "error": "name และ ip เป็นฟิลด์จำเป็น"
+        }), 400
+
+    if not _is_valid_ipv4(ip):
+        return jsonify({
+            "error": f"IP '{ip}' ไม่ใช่ IPv4 ที่ถูกต้อง"
+        }), 400
+
+    policy = load_policy()
+    devices = policy.get("devices", [])
+
+    # กันชื่อ device ซ้ำ
+    if any(d.get("name") == name for d in devices):
+        return jsonify({
+            "error": f"device '{name}' มีอยู่แล้ว"
+        }), 409  # Conflict
+
+    device = {
+        "name": name,
+        "vendor": vendor,
+        "ip": ip,
+        "site": site,
+        "status": status
+    }
+
+    devices.append(device)
+    policy["devices"] = devices
+    save_policy(policy)
+
+    return jsonify(device), 201
+
+@bp.delete("/devices/<name>")
+def api_delete_device(name):
+    """
+    ลบ device ตาม name จาก policy.json
+    """
+    policy = load_policy()
+    devices = policy.get("devices", [])
+
+    new_devices = [d for d in devices if d.get("name") != name]
+
+    if len(new_devices) == len(devices):
+        return jsonify({
+            "error": f"device '{name}' ไม่พบในระบบ"
+        }), 404
+
+    policy["devices"] = new_devices
+    save_policy(policy)
+
+    return jsonify({"message": f"device '{name}' ถูกลบแล้ว"})
+
