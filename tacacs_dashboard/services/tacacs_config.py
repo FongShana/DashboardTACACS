@@ -12,11 +12,23 @@ def build_config_text():
         lines.append("  }")
         lines.append("")
 
-    lines.append("  # users")
+    lines.append("  # Users")
     for user in policy.get("users", []):
-        lines.append(f"  user {user['username']} {{")
-        lines.append("    # password จะไปจัดการทีหลัง")
-        lines.append(f"    member = {user['role']}")
+        username = user.get("username", "unknown")
+        # รองรับทั้ง 'role' และ 'roles'
+        role = user.get("role") or user.get("roles") or "UNASSIGNED"
+
+        lines.append(f"  user {username} {{")
+        lines.append("    # password = (configured separately)")
+        lines.append(f"    member = {role}")
+        lines.append("  }")
+        lines.append("")
+
+    lines.append("  # Roles (as groups) - conceptual")
+    for role in policy.get("roles", []):
+        lines.append(f"  group {role['name']} {{")
+        lines.append(f"    # privilege: {role['privilege']}")
+        lines.append(f"    # description: {role['description']}")
         lines.append("  }")
         lines.append("")
 
