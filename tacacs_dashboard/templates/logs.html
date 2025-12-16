@@ -4,44 +4,122 @@
 {% block header %}Logs &amp; Audit{% endblock %}
 
 {% block content %}
-<section class="section">
-  <h2 class="section-title">Filter (Sample)</h2>
-  <div class="card">
-    <form class="filter-form">
-      <div class="card-sub">ตรงนี้อนาคตจะเชื่อมกับ query จริง ตอนนี้เป็น layout ไว้ก่อน</div>
-    </form>
-  </div>
-</section>
 
 <section class="section">
-  <h2 class="section-title">Events</h2>
+  <h2 class="section-title">User Access Statistics</h2>
+  <p class="section-subtitle">
+    สรุปจำนวนเหตุการณ์ (ทั้ง login / command) ต่อผู้ใช้แต่ละคน จาก log ที่ระบบอ่านได้ในปัจจุบัน
+  </p>
+
   <div class="table-wrapper">
     <table class="table">
       <thead>
         <tr>
-          <th>Time</th>
           <th>User</th>
-          <th>Role</th>
-          <th>Device</th>
-          <th>Action</th>
-          <th>Result</th>
+          <th>Total Events</th>
+          <th>Success</th>
+          <th>Fail</th>
+          <th>Last Seen</th>
         </tr>
       </thead>
       <tbody>
-        {% for e in events %}
+        {% for s in user_stats %}
         <tr>
-          <td>{{ e.time }}</td>
-          <td>{{ e.user }}</td>
-          <td>{{ e.role }}</td>
-          <td>{{ e.device }}</td>
-          <td>{{ e.action }}</td>
-          <td class="{{ 'status-ok' if e.result == 'success' else 'status-fail' }}">
-            {{ e.result }}
-          </td>
+          <td>{{ s.user }}</td>
+          <td>{{ s.total }}</td>
+          <td>{{ s.success }}</td>
+          <td>{{ s.fail }}</td>
+          <td>{{ s.last_seen }}</td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="5">ยังไม่มีข้อมูล user ใน log</td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
 </section>
+
+<section class="section">
+  <h2 class="section-title">Command Logs (OLT Commands)</h2>
+  <p class="section-subtitle">
+    แสดงคำสั่งที่ส่งไปยังอุปกรณ์ (ตัวอย่าง / หรือจาก TACACS+ accounting เมื่อเชื่อมกับ OLT จริง)
+  </p>
+
+  <div class="table-wrapper">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>User</th>
+          <th>Device</th>
+          <th>Source IP</th>
+          <th>Command</th>
+          <th>Result</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for ev in command_events %}
+        <tr>
+          <td>{{ ev.timestamp or ev.time }}</td>
+          <td>{{ ev.user or ev.username }}</td>
+          <td>{{ ev.device or ev.olt or ev.host }}</td>
+          <td>{{ ev.src_ip or ev.client_ip or "-" }}</td>
+          <td>
+            {{ ev.command or ev.cmd or ev.detail or ev.message }}
+          </td>
+          <td>{{ ev.result or ev.status }}</td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="6">ยังไม่มี command logs</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="section">
+  <h2 class="section-title">Recent Events</h2>
+  <p class="section-subtitle">
+    เหตุการณ์ล่าสุดทั้งหมด (login success/fail, command, ฯลฯ) ที่ระบบอ่านได้จาก log
+  </p>
+
+  <div class="table-wrapper">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Type</th>
+          <th>User</th>
+          <th>Device</th>
+          <th>Source IP</th>
+          <th>Detail</th>
+          <th>Result</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for ev in recent_events %}
+        <tr>
+          <td>{{ ev.timestamp or ev.time }}</td>
+          <td>{{ ev.event_type or ev.type or ev.event }}</td>
+          <td>{{ ev.user or ev.username }}</td>
+          <td>{{ ev.device or ev.olt or ev.host }}</td>
+          <td>{{ ev.src_ip or ev.client_ip or "-" }}</td>
+          <td>{{ ev.command or ev.detail or ev.message or "-" }}</td>
+          <td>{{ ev.result or ev.status }}</td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="7">ยังไม่มี log sample หรือยังไม่ได้ตั้งค่า parser ให้ดึงจากไฟล์จริง</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
 {% endblock %}
+
