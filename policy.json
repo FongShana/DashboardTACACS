@@ -17,6 +17,12 @@
       "roles": "OLT_VIEW",
       "status": "Active",
       "last_login": "-"
+    },
+    {
+      "username": "test1",
+      "roles": "OLT_VIEW",
+      "status": "Disabled",
+      "last_login": "-"
     }
   ],
   "roles": [
