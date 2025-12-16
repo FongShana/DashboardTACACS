@@ -16,27 +16,25 @@
 {% endwith %}
 
 <section class="section">
-  <h2 class="section-title">TACACS+ Config Preview</h2>
-  <p class="section-subtitle">
-    ตัวอย่างไฟล์ตั้งค่า tac_plus-ng ที่ generate จาก policy ปัจจุบัน
-    (users / roles / devices) – ยังไม่ได้ apply จริงกับ service
-  </p>
-
-  <pre class="config-preview">{{ config_preview }}</pre>
-</section>
-
-<section class="section">
   <h2 class="section-title">Generate TACACS+ Config (Dry-run)</h2>
   <p>
     ปุ่มนี้จะสร้างไฟล์ config ที่
     <code>/home/trainee25/tacacs-web/tacacs-generated.cfg</code>
-    และรันคำสั่ง <code>tac_plus-ng -C</code> เพื่อตรวจ syntax เท่านั้น
+    และรันคำสั่ง <code>tac_plus-ng -P</code> เพื่อตรวจ syntax เท่านั้น
     ยังไม่ restart service และยังไม่ส่งผลกับ OLT จริง
   </p>
 
-  <form method="post" action="{{ url_for('settings.generate_config') }}">
-    <button type="submit">Generate &amp; Check</button>
-  </form>
+  <div style="display:flex; gap:0.75rem; flex-wrap:wrap; margin-top:0.75rem;">
+    <form method="post" action="{{ url_for('settings.generate_config') }}">
+      <button type="submit" class="btn btn-primary">
+        Generate &amp; Check
+      </button>
+    </form>
+
+    <a href="{{ url_for('settings.download_config') }}" class="btn btn-secondary">
+      Download config
+    </a>
+  </div>
 </section>
 
 {% endblock %}

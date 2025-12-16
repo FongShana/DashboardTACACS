@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, request, redirect, url_for, flash
+from flask import Blueprint, render_template, request, redirect, url_for, flash, send_file
 
 from tacacs_dashboard.services.tacacs_config import build_config_text
 from tacacs_dashboard.services.tacacs_apply import (
@@ -45,3 +45,13 @@ def generate_config():
 
     return redirect(url_for("settings.index"))
 
+@bp.get("/download-config")
+def download_config():
+    # สร้าง config ล่าสุดก่อน แล้วค่อยให้โหลด
+    path, line_count = generate_config_file()
+    return send_file(
+        path,
+        mimetype="text/plain",
+        as_attachment=True,
+        download_name="tacacs-generated.cfg",
+    )
