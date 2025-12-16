@@ -38,7 +38,7 @@ def check_config_syntax(config_path: Path | str = DEFAULT_CONFIG_PATH) -> tuple[
 
     try:
         result = subprocess.run(
-            [TACACS_BIN, "-P", str(config_path), CONFIG_ID],
+            [TACACS_BIN, "-P", str(config_path)],
             capture_output=True,
             text=True,
             timeout=10,

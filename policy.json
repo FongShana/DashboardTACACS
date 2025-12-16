@@ -47,25 +47,25 @@
   ],
   "devices": [
     {
-      "name": "OLT_ZTE_BTG1",
+      "name": "OLT_test1",
       "vendor": "ZTE",
-      "ip": "10.235.xxx.xxx",
+      "ip": "10.235.110.1",
       "site": "BTG",
       "status": "Online"
     },
     {
-      "name": "OLT_ZTE_BTG2",
+      "name": "OLT_test2",
       "vendor": "ZTE",
-      "ip": "10.235.xxx.xxx",
+      "ip": "10.235.110.2",
       "site": "BTG",
       "status": "Online"
     },
     {
-      "name": "OLT_HW_SITEA",
+      "name": "OLT_test3",
       "vendor": "Huawei",
-      "ip": "10.235.110.20",
+      "ip": "10.235.110.3",
       "site": "SITE-A",
-      "status": "Unknown"
+      "status": "Offline"
     }
   ]
 }
