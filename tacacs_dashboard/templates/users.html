@@ -104,24 +104,29 @@
   <h2 class="section-title">Roles / Privilege Profiles</h2>
 
   <!-- ฟอร์มเพิ่ม Role -->
-  <form method="post" action="{{ url_for('users.create_role_form') }}" class="mb-4">
-    <div>
-      <label>Role name</label>
-      <input type="text" name="name" required>
+  <form method="post" action="{{ url_for('users.create_role_form') }}" class="form-card">
+    <div class="form-grid">
+      <div class="form-row">
+        <label for="role_name">Role name</label>
+        <input class="input" id="role_name" type="text" name="name" required>
+      </div>
+
+      <div class="form-row">
+        <label for="role_priv">Privilege</label>
+        <input class="input" id="role_priv" type="text" name="privilege"
+               placeholder="เช่น 1 / read-only หรือ 15 (จำกัดคำสั่ง)">
+      </div>
+
+      <div class="form-row">
+        <label for="role_desc">Description</label>
+        <input class="input" id="role_desc" type="text" name="description"
+               placeholder="เช่น วิศวกร, Operator, Read-only ฯลฯ">
+      </div>
     </div>
 
-    <div>
-      <label>Description</label>
-      <input type="text" name="description" placeholder="เช่น วิศวกร, Operator, Read-only ฯลฯ">
-    </div>
-
-    <div>
-      <label>Privilege</label>
-      <input type="text" name="privilege" placeholder="เช่น 1 / read-only หรือ 15 (จำกัดคำสั่ง)">
-    </div>
-
-    <button type="submit">Add Role</button>
+    <button type="submit" class="btn btn-primary">Add Role</button>
   </form>
+
 
   <!-- ตาราง Roles -->
   <div class="table-wrapper">
@@ -144,7 +149,7 @@
           <td>{{ r.members }}</td>
           <td>
             <form method="post" action="{{ url_for('users.delete_role_form', name=r.name) }}">
-              <button type="submit"
+              <button type="submit" class="btn btn-danger btn-sm"
                       onclick="return confirm('ลบ Role {{ r.name }} ? (ห้ามมี user ใช้อยู่)');">
                 Delete
               </button>
