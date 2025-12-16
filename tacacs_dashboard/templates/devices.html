@@ -4,28 +4,63 @@
 {% block header %}Devices / OLT{% endblock %}
 
 {% block content %}
-<section class="section">
-  <h2 class="section-title">Registered Devices</h2>
-  <div class="card-grid">
-    <div class="card">
-      <div class="card-label">Total Devices</div>
-      <div class="card-value">{{ devices|length }}</div>
-      <div class="card-sub">อุปกรณ์ OLT ที่ลงทะเบียนในระบบ (dummy)</div>
-    </div>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="flash-container">
+    {% for category, message in messages %}
+      <div class="flash flash-{{ category }}">{{ message }}</div>
+    {% endfor %}
   </div>
-</section>
+  {% endif %}
+{% endwith %}
+
+<h2 class="mb-3">Add Device / OLT</h2>
+<form method="post" action="{{ url_for('devices.create_device_form') }}" class="mb-4">
+  <div>
+    <label>Name</label>
+    <input type="text" name="name" placeholder="เช่น OLT_ZTE_BTG1" required>
+  </div>
+
+  <div>
+    <label>Vendor</label>
+    <input type="text" name="vendor" placeholder="ZTE / Huawei / ฯลฯ">
+  </div>
+
+  <div>
+    <label>IP Address</label>
+    <input type="text" name="ip" placeholder="10.x.x.x" required>
+  </div>
+
+  <div>
+    <label>Site</label>
+    <input type="text" name="site" placeholder="BTG / SITE-A / LAB ฯลฯ">
+  </div>
+
+  <div>
+    <label>Status</label>
+    <select name="status">
+      <option value="Online">Online</option>
+      <option value="Offline">Offline</option>
+      <option value="Unknown" selected>Unknown</option>
+    </select>
+  </div>
+
+  <button type="submit">Add Device</button>
+</form>
 
 <section class="section">
-  <h2 class="section-title">Devices List</h2>
+  <h2 class="section-title">Registered Devices / OLT</h2>
   <div class="table-wrapper">
     <table class="table">
       <thead>
         <tr>
           <th>Name</th>
           <th>Vendor</th>
-          <th>Mgmt IP</th>
+          <th>IP</th>
           <th>Site</th>
           <th>Status</th>
+          <th>Actions</th>
         </tr>
       </thead>
       <tbody>
@@ -36,10 +71,23 @@
           <td>{{ d.ip }}</td>
           <td>{{ d.site }}</td>
           <td>{{ d.status }}</td>
+          <td>
+            <form method="post" action="{{ url_for('devices.delete_device_form', name=d.name) }}">
+              <button type="submit" onclick="return confirm('ลบอุปกรณ์ {{ d.name }} ?')">
+                Delete
+              </button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="6">ยังไม่มีอุปกรณ์ในระบบ</td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
 </section>
+
 {% endblock %}
+
