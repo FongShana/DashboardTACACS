@@ -16,37 +16,42 @@
 {% endwith %}
 
 <h2 class="mb-3">Add Device / OLT</h2>
-<form method="post" action="{{ url_for('devices.create_device_form') }}" class="mb-4">
-  <div>
-    <label>Name</label>
-    <input type="text" name="name" placeholder="เช่น OLT_ZTE_BTG1" required>
+<form method="post" action="{{ url_for('devices.create_device_form') }}" class="form-card">
+  <div class="form-grid">
+    <div class="form-row">
+      <label for="dev_name">Name</label>
+      <input class="input" id="dev_name" type="text" name="name"
+             placeholder="เช่น OLT_ZTE_BTG1" required>
+    </div>
+
+    <div class="form-row">
+      <label for="dev_vendor">Vendor</label>
+      <input class="input" id="dev_vendor" type="text" name="vendor"
+             placeholder="ZTE / Huawei / ฯลฯ">
+    </div>
+
+    <div class="form-row">
+      <label for="dev_ip">IP Address</label>
+      <input class="input" id="dev_ip" type="text" name="ip" placeholder="10.x.x.x" required>
+    </div>
+
+    <div class="form-row">
+      <label for="dev_site">Site</label>
+      <input class="input" id="dev_site" type="text" name="site"
+             placeholder="BTG / SITE-A / LAB ฯลฯ">
+    </div>
+
+    <div class="form-row">
+      <label for="dev_status">Status</label>
+      <select class="input" id="dev_status" name="status">
+        <option value="Online">Online</option>
+        <option value="Offline">Offline</option>
+        <option value="Unknown" selected>Unknown</option>
+      </select>
+    </div>
   </div>
 
-  <div>
-    <label>Vendor</label>
-    <input type="text" name="vendor" placeholder="ZTE / Huawei / ฯลฯ">
-  </div>
-
-  <div>
-    <label>IP Address</label>
-    <input type="text" name="ip" placeholder="10.x.x.x" required>
-  </div>
-
-  <div>
-    <label>Site</label>
-    <input type="text" name="site" placeholder="BTG / SITE-A / LAB ฯลฯ">
-  </div>
-
-  <div>
-    <label>Status</label>
-    <select name="status">
-      <option value="Online">Online</option>
-      <option value="Offline">Offline</option>
-      <option value="Unknown" selected>Unknown</option>
-    </select>
-  </div>
-
-  <button type="submit">Add Device</button>
+  <button type="submit" class="btn btn-primary">Add Device</button>
 </form>
 
 <section class="section">
@@ -73,7 +78,7 @@
           <td>{{ d.status }}</td>
           <td>
             <form method="post" action="{{ url_for('devices.delete_device_form', name=d.name) }}">
-              <button type="submit" onclick="return confirm('ลบอุปกรณ์ {{ d.name }} ?')">
+              <button type="submit" class="btn btn-danger btn-sm"  onclick="return confirm('ลบอุปกรณ์ {{ d.name }} ?')">
                 Delete
               </button>
             </form>

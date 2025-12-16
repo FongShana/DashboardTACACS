@@ -261,7 +261,7 @@ code {
 /* ---- Forms & Buttons ---- */
 
 .form-card {
-  background: #0f172a;
+  background: #6de329;
   padding: 1.25rem;
   border-radius: 0.75rem;
   margin-bottom: 1.5rem;
@@ -288,16 +288,16 @@ code {
 }
 
 .form-row label {
-  font-size: 0.8rem;
-  color: #9ca3af;
+  font-size: 1rem;
+  color: #000000;
 }
 
 .input {
-  background: #020617;
+  background: #ffffff;
   border: 1px solid #1f2937;
   border-radius: 0.5rem;
   padding: 0.4rem 0.6rem;
-  color: #e5e7eb;
+  color: #000000;
   font-size: 0.85rem;
 }
 
