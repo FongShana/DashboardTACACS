@@ -1,29 +1,43 @@
 {% extends "base.html" %}
 
 {% block title %}Settings | NT TACACS+{% endblock %}
-{% block header %}System Settings{% endblock %}
+{% block header %}Settings{% endblock %}
 
 {% block content %}
-<section class="section">
-  <h2 class="section-title">TACACS+ Configuration (Sample)</h2>
-  <div class="card">
-    <p class="card-sub">
-      Connect with real config in the future.Right now show example of variables in settings.py
-    </p>
-    <p><strong>Config path:</strong> {{ settings.tacacs_config_path }}</p>
-    <p><strong>Accounting log path:</strong> {{ settings.tacacs_log_path }}</p>
-    <p><strong>Web listen:</strong> {{ settings.web_listen }}</p>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="flash-container">
+    {% for category, message in messages %}
+      <div class="flash flash-{{ category }}">{{ message }}</div>
+    {% endfor %}
   </div>
+  {% endif %}
+{% endwith %}
+
+<section class="section">
+  <h2 class="section-title">TACACS+ Config Preview</h2>
+  <p class="section-subtitle">
+    ตัวอย่างไฟล์ตั้งค่า tac_plus-ng ที่ generate จาก policy ปัจจุบัน
+    (users / roles / devices) – ยังไม่ได้ apply จริงกับ service
+  </p>
+
+  <pre class="config-preview">{{ config_preview }}</pre>
 </section>
 
 <section class="section">
-  <h2 class="section-title">Operations (Mock)</h2>
-  <div class="card">
-    <p class="card-sub">
-      placeholder (Not link with systemd yet)
-    </p>
-    <button disabled>Reload TACACS+ Service (Coming soon)</button>
-    <button disabled>Regenerate TACACS+ Config (Coming soon)</button>
-  </div>
+  <h2 class="section-title">Generate TACACS+ Config (Dry-run)</h2>
+  <p>
+    ปุ่มนี้จะสร้างไฟล์ config ที่
+    <code>/home/trainee25/tacacs-web/tacacs-generated.cfg</code>
+    และรันคำสั่ง <code>tac_plus-ng -C</code> เพื่อตรวจ syntax เท่านั้น
+    ยังไม่ restart service และยังไม่ส่งผลกับ OLT จริง
+  </p>
+
+  <form method="post" action="{{ url_for('settings.generate_config') }}">
+    <button type="submit">Generate &amp; Check</button>
+  </form>
 </section>
+
 {% endblock %}
+

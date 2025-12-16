@@ -243,3 +243,16 @@ code {
     grid-template-columns: 1fr;
   }
 }
+
+/* Preview page  */
+.config-preview {
+  background: #111827;
+  color: #e5e7eb;
+  padding: 1rem;
+  border-radius: 0.75rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.85rem;
+  max-height: 500px;
+  overflow: auto;
+  white-space: pre;
+}
