@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block title %}Edit Device | NT TACACS+{% endblock %}
+{% block header %}Edit Device: {{ device.name }}{% endblock %}
+
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="flash-container">
+    {% for category, message in messages %}
+      <div class="flash flash-{{ category }}">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+
+<section class="section">
+  <h2 class="section-title">Edit OLT / Device</h2>
+
+  <form method="post" class="form-card">
+    <div class="form-grid">
+      <div class="form-row">
+        <label>Name (แก้ไม่ได้)</label>
+        <input class="input" type="text" value="{{ device.name }}" disabled>
+      </div>
+
+      <div class="form-row">
+        <label for="vendor">Vendor</label>
+        <input class="input" id="vendor" type="text" name="vendor"
+               value="{{ device.vendor or '' }}" placeholder="ZTE / Huawei ฯลฯ">
+      </div>
+
+      <div class="form-row">
+        <label for="ip">IP Address</label>
+        <input class="input" id="ip" type="text" name="ip"
+               value="{{ device.ip or '' }}" placeholder="10.x.x.x">
+      </div>
+
+      <div class="form-row">
+        <label for="site">Site</label>
+        <input class="input" id="site" type="text" name="site"
+               value="{{ device.site or '' }}" placeholder="BTG / WURC / LAB ฯลฯ">
+      </div>
+
+      <div class="form-row">
+        <label for="status">Status</label>
+        <select class="input" id="status" name="status">
+          {% set st = device.status or "Unknown" %}
+          <option value="Online"  {% if st == "Online" %}selected{% endif %}>Online</option>
+          <option value="Offline" {% if st == "Offline" %}selected{% endif %}>Offline</option>
+          <option value="Unknown" {% if st == "Unknown" %}selected{% endif %}>Unknown</option>
+        </select>
+      </div>
+    </div>
+
+    <div style="display:flex; gap:0.75rem; margin-top:0.75rem;">
+      <button type="submit" class="btn btn-primary">Save</button>
+      <a href="{{ url_for('devices.index') }}" class="btn btn-secondary">Cancel</a>
+    </div>
+  </form>
+</section>
+
+{% endblock %}

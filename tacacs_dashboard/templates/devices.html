@@ -77,8 +77,15 @@
           <td>{{ d.site }}</td>
           <td>{{ d.status }}</td>
           <td>
-            <form method="post" action="{{ url_for('devices.delete_device_form', name=d.name) }}">
-              <button type="submit" class="btn btn-danger btn-sm"  onclick="return confirm('ลบอุปกรณ์ {{ d.name }} ?')">
+            <a href="{{ url_for('devices.edit_device_form', name=d.name) }}"
+               class="btn btn-secondary btn-sm">
+              Edit
+            </a>
+            <form method="post"
+                  action="{{ url_for('devices.delete_device_form', name=d.name) }}"
+                  style="display:inline;">
+              <button type="submit" class="btn btn-danger btn-sm"
+                      onclick="return confirm('ลบอุปกรณ์ {{ d.name }} ?')">
                 Delete
               </button>
             </form>

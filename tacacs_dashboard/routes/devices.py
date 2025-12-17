@@ -79,3 +79,51 @@ def delete_device_form(name):
     flash(f"ลบอุปกรณ์ {name} เรียบร้อย", "success")
     return redirect(url_for("devices.index"))
 
+
+
+@bp.get("/<name>/edit")
+def edit_device_form(name):
+    policy = load_policy()
+    devices = policy.get("devices", [])
+
+    target = None
+    for d in devices:
+        if d.get("name") == name:
+            target = d
+            break
+
+    if not target:
+        flash(f"ไม่พบ Device {name}", "error")
+        return redirect(url_for("devices.index"))
+
+    return render_template(
+        "device_edit.html",
+        active_page="devices",
+        device=target,
+    )
+
+
+@bp.post("/<name>/edit")
+def edit_device_submit(name):
+    policy = load_policy()
+    devices = policy.get("devices", [])
+
+    target = None
+    for d in devices:
+        if d.get("name") == name:
+            target = d
+            break
+
+    if not target:
+        flash(f"ไม่พบ Device {name}", "error")
+        return redirect(url_for("devices.index"))
+
+    # อัปเดต field ที่แก้ได้
+    target["vendor"] = request.form.get("vendor", "").strip()
+    target["ip"]     = request.form.get("ip", "").strip()
+    target["site"]   = request.form.get("site", "").strip()
+    target["status"] = request.form.get("status", "").strip()
+
+    save_policy(policy)
+    flash(f"อัปเดต Device {name} เรียบร้อยแล้ว", "success")
+    return redirect(url_for("devices.index"))
