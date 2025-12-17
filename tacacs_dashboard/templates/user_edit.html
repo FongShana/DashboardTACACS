@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block title %}Edit User | NT TACACS+{% endblock %}
+{% block header %}Edit User: {{ user.username }}{% endblock %}
+
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="flash-container">
+    {% for category, message in messages %}
+      <div class="flash flash-{{ category }}">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+
+<section class="section">
+  <h2 class="section-title">Edit User / Role / Status</h2>
+
+  <form method="post" class="form-card">
+    <div class="form-grid">
+      <div class="form-row">
+        <label>Username (แก้ไม่ได้)</label>
+        <input class="input" type="text" value="{{ user.username }}" disabled>
+      </div>
+
+      <div class="form-row">
+        <label for="role">Role</label>
+        <select class="input" id="role" name="role">
+          <option value="">-- เลือก Role --</option>
+          {% for r in roles %}
+          <option value="{{ r.name }}"
+                  {% if r.name == current_role %}selected{% endif %}>
+            {{ r.name }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="form-row">
+        <label for="status">Status</label>
+        {% set st = user.status or "Active" %}
+        <select class="input" id="status" name="status">
+          <option value="Active"   {% if st == "Active" %}selected{% endif %}>Active</option>
+          <option value="Disabled" {% if st == "Disabled" %}selected{% endif %}>Disabled</option>
+        </select>
+      </div>
+    </div>
+
+    <div style="display:flex; gap:0.75rem; margin-top:0.75rem;">
+      <button type="submit" class="btn btn-primary">Save</button>
+      <a href="{{ url_for('users.index') }}" class="btn btn-secondary">Cancel</a>
+    </div>
+  </form>
+</section>
+
+{% endblock %}

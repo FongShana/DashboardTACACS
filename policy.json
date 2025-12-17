@@ -20,7 +20,7 @@
     },
     {
       "username": "test1",
-      "roles": "OLT_VIEW",
+      "roles": "OLT_OP",
       "status": "Disabled",
       "last_login": "-"
     }

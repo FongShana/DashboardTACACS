@@ -83,8 +83,18 @@
           <td>{{ user.status }}</td>
           <td>{{ user.last_login }}</td>
           <td>
-            <form method="post" action="{{ url_for('users.delete_user_form', username=user.username) }}">
-              <button type="submit" class="btn btn-danger btn-sm"  onclick="return confirm('ลบผู้ใช้ {{ user.username }} ?')">
+            <a href="{{ url_for('users.edit_user_form', username=user.username) }}"
+               class="btn btn-secondary btn-sm">
+              Edit
+            </a>
+
+            <!-- ปุ่ม Delete เดิม แต่ใส่ class ให้สวยขึ้น -->
+            <form method="post"
+                  action="{{ url_for('users.delete_user_form', username=user.username) }}"
+                  style="display:inline;">
+              <button type="submit"
+                      class="btn btn-danger btn-sm"
+                      onclick="return confirm('ลบผู้ใช้ {{ user.username }} ?')">
                 Delete
               </button>
             </form>

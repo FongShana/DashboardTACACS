@@ -138,3 +138,110 @@ def delete_role_form(name):
     flash(f"ลบ Role {name} เรียบร้อย", "success")
     return redirect(url_for("users.index"))
 
+@bp.get("/roles/<name>/edit")
+def edit_role_form(name):
+    policy = load_policy()
+    roles = policy.get("roles", [])
+
+    target = None
+    for r in roles:
+        if r.get("name") == name:
+            target = r
+            break
+
+    if not target:
+        flash(f"ไม่พบ Role {name}", "error")
+        return redirect(url_for("users.index"))
+
+    return render_template(
+        "role_edit.html",
+        active_page="users",
+        role=target,
+    )
+
+
+@bp.post("/roles/<name>/edit")
+def edit_role_submit(name):
+    policy = load_policy()
+    roles = policy.get("roles", [])
+
+    target = None
+    for r in roles:
+        if r.get("name") == name:
+            target = r
+            break
+
+    if not target:
+        flash(f"ไม่พบ Role {name}", "error")
+        return redirect(url_for("users.index"))
+
+    # อัปเดตเฉพาะ description และ privilege
+    target["description"] = request.form.get("description", "").strip()
+    target["privilege"] = request.form.get("privilege", "").strip()
+
+    save_policy(policy)
+    flash(f"อัปเดต Role {name} เรียบร้อยแล้ว", "success")
+    return redirect(url_for("users.index"))
+
+
+
+@bp.get("/edit/<username>")
+def edit_user_form(username):
+    policy = load_policy()
+    users = policy.get("users", [])
+    roles = policy.get("roles", [])
+
+    target = None
+    for u in users:
+        if u.get("username") == username:
+            target = u
+            break
+
+    if not target:
+        flash(f"ไม่พบผู้ใช้ {username}", "error")
+        return redirect(url_for("users.index"))
+
+    # role ปัจจุบันของ user (รองรับทั้ง 'roles' และ 'role')
+    current_role = target.get("roles") or target.get("role") or ""
+
+    return render_template(
+        "user_edit.html",
+        active_page="users",
+        user=target,
+        roles=roles,
+        current_role=current_role,
+    )
+
+
+@bp.post("/edit/<username>")
+def edit_user_submit(username):
+    policy = load_policy()
+    users = policy.get("users", [])
+    roles = policy.get("roles", [])
+
+    target = None
+    for u in users:
+        if u.get("username") == username:
+            target = u
+            break
+
+    if not target:
+        flash(f"ไม่พบผู้ใช้ {username}", "error")
+        return redirect(url_for("users.index"))
+
+    new_role = (request.form.get("role") or "").strip()
+    new_status = (request.form.get("status") or "").strip()
+
+    # ตรวจว่า role ใหม่มีอยู่จริงไหม
+    role_names = {r.get("name") for r in roles}
+    if new_role and new_role not in role_names:
+        flash(f"Role {new_role} ไม่มีอยู่ในระบบ", "error")
+        return redirect(url_for("users.edit_user_form", username=username))
+
+    # อัปเดตค่า (ใช้ key 'roles' เป็นหลัก)
+    target["roles"] = new_role
+    target["status"] = new_status or target.get("status", "Active")
+
+    save_policy(policy)
+    flash(f"อัปเดตผู้ใช้ {username} เรียบร้อยแล้ว", "success")
+    return redirect(url_for("users.index"))
