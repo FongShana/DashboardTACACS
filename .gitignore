@@ -9,6 +9,8 @@ venv/
 instance/
 config.yml
 tac_plus-ng.cfg
+tacacs-generated.cfg
+policy.json
 
 # Logs
 *.log
