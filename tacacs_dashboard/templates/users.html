@@ -158,8 +158,15 @@
           <td>{{ r.privilege }}</td>
           <td>{{ r.members }}</td>
           <td>
-            <form method="post" action="{{ url_for('users.delete_role_form', name=r.name) }}">
-              <button type="submit" class="btn btn-danger btn-sm"
+            <a href="{{ url_for('users.edit_role_form', name=r.name) }}" class="btn btn-secondary btn-sm" >
+              Edit
+            </a>
+
+            <form method="post"
+                  action="{{ url_for('users.delete_role_form', name=r.name) }}"
+                  style="display:inline;">
+              <button type="submit"
+                      class="btn btn-danger btn-sm"
                       onclick="return confirm('ลบ Role {{ r.name }} ? (ห้ามมี user ใช้อยู่)');">
                 Delete
               </button>
