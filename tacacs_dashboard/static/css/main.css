@@ -391,17 +391,17 @@ code {
 
 .badge-success {
   background: rgba(16, 185, 129, 0.15);
-  color: #6ee7b7;
+  color: #49A836;
 }
 
 .badge-danger {
   background: rgba(239, 68, 68, 0.15);
-  color: #fca5a5;
+  color: #B51E00;
 }
 
 .badge-neutral {
   background: rgba(156, 163, 175, 0.15);
-  color: #e5e7eb;
+  color: #6B6B6B;
 }
 
 .text-mono {
