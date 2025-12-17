@@ -6,46 +6,81 @@
 {% block content %}
 
 <section class="section">
-  <h2 class="section-title">User Access Statistics</h2>
-  <p class="section-subtitle">
-    สรุปจำนวนเหตุการณ์ (ทั้ง login / command) ต่อผู้ใช้แต่ละคน จาก log ที่ระบบอ่านได้ในปัจจุบัน
-  </p>
-
-  <div class="table-wrapper">
-    <table class="table">
-      <thead>
-        <tr>
-          <th>User</th>
-          <th>Total Events</th>
-          <th>Success</th>
-          <th>Fail</th>
-          <th>Last Seen</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for s in user_stats %}
-        <tr>
-          <td>{{ s.user }}</td>
-          <td>{{ s.total }}</td>
-          <td>{{ s.success }}</td>
-          <td>{{ s.fail }}</td>
-          <td>{{ s.last_seen }}</td>
-        </tr>
-        {% else %}
-        <tr>
-          <td colspan="5">ยังไม่มีข้อมูล user ใน log</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+  <h2 class="section-title">Summary</h2>
+  <div class="card-grid">
+    <div class="card">
+      <div class="card-label">Auth Events</div>
+      <div class="card-value">{{ total_events }}</div>
+      <div class="card-sub">จำนวนเหตุการณ์ Authentication (ตาม filter ปัจจุบัน)</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Command Logs</div>
+      <div class="card-value">{{ total_cmd }}</div>
+      <div class="card-sub">คำสั่งที่ถูกส่งไปยัง OLT (จาก log parser)</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Success</div>
+      <div class="card-value">{{ total_success }}</div>
+      <div class="card-sub">ACCEPT / PASS</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Failed</div>
+      <div class="card-value">{{ total_fail }}</div>
+      <div class="card-sub">REJECT / FAIL</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Users</div>
+      <div class="card-value">{{ unique_user_count }}</div>
+      <div class="card-sub">ผู้ใช้ที่มีเหตุการณ์ในช่วงนี้</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Devices</div>
+      <div class="card-value">{{ unique_device_count }}</div>
+      <div class="card-sub">OLT / Device ที่มีการเข้าถึง</div>
+    </div>
   </div>
 </section>
 
 <section class="section">
-  <h2 class="section-title">Command Logs (OLT Commands)</h2>
-  <p class="section-subtitle">
-    แสดงคำสั่งที่ส่งไปยังอุปกรณ์ (ตัวอย่าง / หรือจาก TACACS+ accounting เมื่อเชื่อมกับ OLT จริง)
-  </p>
+  <h2 class="section-title">Authentication Logs</h2>
+
+  <!-- Filter bar -->
+  <form method="get" class="filter-bar">
+    <div class="filter-item">
+      <label>User</label>
+      <select name="user">
+        <option value="">-- All --</option>
+        {% for u in user_list %}
+        <option value="{{ u }}" {% if u == user_filter %}selected{% endif %}>{{ u }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="filter-item">
+      <label>Device</label>
+      <select name="device">
+        <option value="">-- All --</option>
+        {% for d in device_list %}
+        <option value="{{ d }}" {% if d == device_filter %}selected{% endif %}>{{ d }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="filter-item">
+      <label>Result</label>
+      <select name="result">
+        <option value="">-- All --</option>
+        {% for r in result_list %}
+        <option value="{{ r }}" {% if r == result_filter %}selected{% endif %}>{{ r }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="filter-actions">
+      <button type="submit" class="btn btn-primary">Apply</button>
+      <a href="{{ url_for('logs.index') }}" class="btn btn-secondary">Reset</a>
+    </div>
+  </form>
 
   <div class="table-wrapper">
     <table class="table">
@@ -54,26 +89,33 @@
           <th>Time</th>
           <th>User</th>
           <th>Device</th>
-          <th>Source IP</th>
-          <th>Command</th>
+          <th>Action</th>
           <th>Result</th>
+          <th>Raw</th>
         </tr>
       </thead>
       <tbody>
-        {% for ev in command_events %}
+        {% for e in recent_events %}
         <tr>
-          <td>{{ ev.timestamp or ev.time }}</td>
-          <td>{{ ev.user or ev.username }}</td>
-          <td>{{ ev.device or ev.olt or ev.host }}</td>
-          <td>{{ ev.src_ip or ev.client_ip or "-" }}</td>
+          <td>{{ e.timestamp }}</td>
+          <td>{{ e.user }}</td>
+          <td>{{ e.device }}</td>
+          <td>{{ e.action }}</td>
           <td>
-            {{ ev.command or ev.cmd or ev.detail or ev.message }}
+            {% set res = (e.result or '') %}
+            {% if res.upper() in ['ACCEPT', 'OK', 'PASS', 'SUCCESS'] %}
+              <span class="badge badge-success">{{ res }}</span>
+            {% elif res.upper() in ['REJECT', 'FAIL', 'ERROR'] %}
+              <span class="badge badge-danger">{{ res }}</span>
+            {% else %}
+              <span class="badge badge-neutral">{{ res }}</span>
+            {% endif %}
           </td>
-          <td>{{ ev.result or ev.status }}</td>
+          <td class="text-mono small">{{ e.raw }}</td>
         </tr>
         {% else %}
         <tr>
-          <td colspan="6">ยังไม่มี command logs</td>
+          <td colspan="6">ยังไม่มี Authentication logs ตาม filter ที่เลือก</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -82,38 +124,54 @@
 </section>
 
 <section class="section">
-  <h2 class="section-title">Recent Events</h2>
-  <p class="section-subtitle">
-    เหตุการณ์ล่าสุดทั้งหมด (login success/fail, command, ฯลฯ) ที่ระบบอ่านได้จาก log
-  </p>
+  <h2 class="section-title">User Activity</h2>
+  <div class="table-wrapper">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>User</th>
+          <th>Auth Count</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in user_stats %}
+        <tr>
+          <td>{{ row.user }}</td>
+          <td>{{ row.count }}</td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="2">ยังไม่มีข้อมูลสถิติผู้ใช้</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
 
+<section class="section">
+  <h2 class="section-title">Command Audit Logs</h2>
   <div class="table-wrapper">
     <table class="table">
       <thead>
         <tr>
           <th>Time</th>
-          <th>Type</th>
           <th>User</th>
           <th>Device</th>
-          <th>Source IP</th>
-          <th>Detail</th>
-          <th>Result</th>
+          <th>Command</th>
         </tr>
       </thead>
       <tbody>
-        {% for ev in recent_events %}
+        {% for c in command_events %}
         <tr>
-          <td>{{ ev.timestamp or ev.time }}</td>
-          <td>{{ ev.event_type or ev.type or ev.event }}</td>
-          <td>{{ ev.user or ev.username }}</td>
-          <td>{{ ev.device or ev.olt or ev.host }}</td>
-          <td>{{ ev.src_ip or ev.client_ip or "-" }}</td>
-          <td>{{ ev.command or ev.detail or ev.message or "-" }}</td>
-          <td>{{ ev.result or ev.status }}</td>
+          <td>{{ c.timestamp }}</td>
+          <td>{{ c.user }}</td>
+          <td>{{ c.device }}</td>
+          <td class="text-mono small">{{ c.command }}</td>
         </tr>
         {% else %}
         <tr>
-          <td colspan="7">ยังไม่มี log sample หรือยังไม่ได้ตั้งค่า parser ให้ดึงจากไฟล์จริง</td>
+          <td colspan="4">ยังไม่มี command logs (ยังไม่ได้ต่อกับ tac_plus-ng / OLT จริง)</td>
         </tr>
         {% endfor %}
       </tbody>
