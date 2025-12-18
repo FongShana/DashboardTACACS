@@ -4,8 +4,6 @@ from .policy_store import load_policy
 # โฟลเดอร์ฐานของโปรเจกต์ (ที่มี policy.json, secret.env, pass.secret)
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 SECRET_ENV_PATH = BASE_DIR / "secret.env"
-
-# 👉 เพิ่มบรรทัดนี้ (ไฟล์เก็บ user/password ของ TACACS+)
 PASS_SECRET_PATH = BASE_DIR / "pass.secret"
 
 
@@ -29,7 +27,7 @@ def load_shared_key() -> str:
 
 def build_config_text() -> str:
     policy = load_policy()
-    users   = policy.get("users", [])
+    users   = policy.get("users", [])   # ตอนนี้ใช้เพื่อโชว์ใน UI อย่างเดียว
     roles   = policy.get("roles", [])
     devices = policy.get("devices", [])
 
@@ -51,17 +49,12 @@ def build_config_text() -> str:
 
     # ---------- tac_plus-ng ----------
     lines.append("id = tac_plus-ng {")
-    # 👉 จุดสำคัญ: include ไฟล์ pass.secret ที่เก็บ user/password จริง
-    lines.append(f'  include = "{PASS_SECRET_PATH}"')
-    lines.append("")
-
     lines.append("  # Devices (map จาก policy.devices -> host)")
     for dev in devices:
         name = dev.get("name") or dev.get("id") or "OLT_UNKNOWN"
         addr = dev.get("address") or dev.get("ip") or "0.0.0.0"
         lines.append(f"  host = {name} {{")
         lines.append(f"    address = {addr}")
-        # ใช้ shared_key จาก secret.env (ใส่ใน "" เผื่อมีตัวพิเศษ)
         lines.append(f'    key = "{shared_key}"')
         lines.append("  }")
         lines.append("")
@@ -79,19 +72,10 @@ def build_config_text() -> str:
         lines.append("  }")
         lines.append("")
 
-    lines.append("  # Users (ไม่มี password จริง อยู่ใน pass.secret แทน)")
-    for u in users:
-        username = u.get("username") or "user_unknown"
-        role     = u.get("role") or u.get("roles") or ""
-        lines.append(f"  user = {username} {{")
-        lines.append("    # login = clear <จัดการใน pass.secret หรือ backend อื่น>")
-        if role:
-            lines.append(f"    member = {role}")
-        lines.append("  }")
-        lines.append("")
-
+    # ตรงนี้แค่ comment ไว้ ไม่สร้าง user block จริง เพื่อเลี่ยงซ้ำกับ pass.secret
+    lines.append("  # Users are defined in separate pass.secret file")
+    lines.append(f'  include = "{BASE_DIR / "pass.secret"}"')
     lines.append("}")
-    lines.append("")
 
     return "\n".join(lines)
 
