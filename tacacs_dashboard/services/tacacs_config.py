@@ -1,9 +1,12 @@
 from pathlib import Path
 from .policy_store import load_policy
 
-# โฟลเดอร์ฐานของโปรเจกต์ (ที่มี policy.json, secret.env)
+# โฟลเดอร์ฐานของโปรเจกต์ (ที่มี policy.json, secret.env, pass.secret)
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 SECRET_ENV_PATH = BASE_DIR / "secret.env"
+
+# 👉 เพิ่มบรรทัดนี้ (ไฟล์เก็บ user/password ของ TACACS+)
+PASS_SECRET_PATH = BASE_DIR / "pass.secret"
 
 
 def load_shared_key() -> str:
@@ -48,6 +51,10 @@ def build_config_text() -> str:
 
     # ---------- tac_plus-ng ----------
     lines.append("id = tac_plus-ng {")
+    # 👉 จุดสำคัญ: include ไฟล์ pass.secret ที่เก็บ user/password จริง
+    lines.append(f'  include = "{PASS_SECRET_PATH}"')
+    lines.append("")
+
     lines.append("  # Devices (map จาก policy.devices -> host)")
     for dev in devices:
         name = dev.get("name") or dev.get("id") or "OLT_UNKNOWN"
@@ -72,12 +79,12 @@ def build_config_text() -> str:
         lines.append("  }")
         lines.append("")
 
-    lines.append("  # Users")
+    lines.append("  # Users (ไม่มี password จริง อยู่ใน pass.secret แทน)")
     for u in users:
         username = u.get("username") or "user_unknown"
         role     = u.get("role") or u.get("roles") or ""
         lines.append(f"  user = {username} {{")
-        lines.append("    # login = clear <ใส่รหัสจริง หรือใช้ backend อื่น>")
+        lines.append("    # login = clear <จัดการใน pass.secret หรือ backend อื่น>")
         if role:
             lines.append(f"    member = {role}")
         lines.append("  }")
