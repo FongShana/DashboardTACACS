@@ -12,6 +12,7 @@ tac_plus-ng.cfg
 tacacs-generated.cfg
 policy.json
 secret.env
+pass.secret
 
 # Logs
 *.log
