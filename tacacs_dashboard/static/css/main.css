@@ -41,6 +41,12 @@ body {
   overflow-y: auto;
 }
 
+.sidebar-logo {
+  height: 40px;       /* ปรับขนาดโลโก้ตามที่ชอบ */
+  width: auto;
+  display: block;
+}
+
 .logo-circle {
   width: 36px;
   height: 36px;
