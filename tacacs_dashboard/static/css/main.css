@@ -17,6 +17,10 @@ body {
 
 /* Sidebar */
 .sidebar {
+  position: fixed;      /* ทำให้ยึดอยู่กับที่ */
+  top: 0;
+  left: 0;
+  bottom: 0;           /* เต็มความสูงจอ */
   width: 260px;
   background: #111827;
   color: #e5e7eb;
@@ -30,6 +34,11 @@ body {
   align-items: center;
   gap: 0.75rem;
   margin-bottom: 2rem;
+}
+
+.sidebar nav,
+.sidebar .sidebar-footer {
+  overflow-y: auto;
 }
 
 .logo-circle {
@@ -111,7 +120,8 @@ body {
 
 /* Main area */
 .main {
-  flex: 1;
+  margin-left: 260px;   /* เว้นที่ให้ sidebar ด้านซ้าย */
+  min-height: 100vh;
   display: flex;
   flex-direction: column;
 }
