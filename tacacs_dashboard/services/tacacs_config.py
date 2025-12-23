@@ -76,6 +76,17 @@ def build_config_text() -> str:
 
     # tac_plus-ng
     lines.append("id = tac_plus-ng {")
+    lines.append("  # ----- Logging (authc/authz/acct/conn) -----")
+    lines.append("  log authclog { destination = /var/log/tac_plus/authc-%Y-%m-%d.log }")
+    lines.append("  log authzlog { destination = /var/log/tac_plus/authz-%Y-%m-%d.log }")
+    lines.append("  log acctlog  { destination = /var/log/tac_plus/acct-%Y-%m-%d.log }")
+    lines.append("  log connlog  { destination = /var/log/tac_plus/conn-%Y-%m-%d.log }")
+    lines.append("")
+    lines.append("  authentication log = authclog")
+    lines.append("  authorization log = authzlog")
+    lines.append("  accounting log = acctlog")
+    lines.append("  connection log = connlog")
+    lines.append("")
     lines.append("  # Devices (map จาก policy.devices -> host)")
     for dev in devices:
         name = dev.get("name") or dev.get("id") or "OLT_UNKNOWN"
