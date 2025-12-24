@@ -1,41 +1,35 @@
+# tacacs_dashboard/services/tacacs_config.py
 from pathlib import Path
 import re
 
 from .policy_store import load_policy
 
-# โฟลเดอร์ฐานของโปรเจกต์ (ที่มี policy.json, secret.env, pass.secret)
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 SECRET_ENV_PATH = BASE_DIR / "secret.env"
 PASS_SECRET_PATH = BASE_DIR / "pass.secret"
 
 
 def load_shared_key() -> str:
-    """อ่านค่า TACACS_SHARED_KEY จาก secret.env"""
     if not SECRET_ENV_PATH.exists():
         return "CHANGE_ME"
-
     for line in SECRET_ENV_PATH.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
         if line.startswith("TACACS_SHARED_KEY="):
             return line.split("=", 1)[1].strip()
-
     return "CHANGE_ME"
 
 
 def load_default_user_password() -> str:
-    """อ่าน DEFAULT_USER_PASSWORD จาก secret.env (ถ้าไม่มีก็ใช้ test)"""
     if not SECRET_ENV_PATH.exists():
         return "test"
-
     for line in SECRET_ENV_PATH.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
         if line.startswith("DEFAULT_USER_PASSWORD="):
             return line.split("=", 1)[1].strip() or "test"
-
     return "test"
 
 
@@ -45,8 +39,7 @@ def _escape(s: str) -> str:
 
 def _parse_privilege(value) -> int:
     """
-    role.privilege ในเว็บอาจเป็น '15' หรือ '15 / full' -> เอาเลขตัวแรก
-    ถ้าไม่เจอให้ default เป็น 1 (อย่าเป็น 0)
+    policy roles[].privilege อาจเป็น '15', 15, หรือ '15 / full'
     """
     if value is None:
         return 1
@@ -54,8 +47,16 @@ def _parse_privilege(value) -> int:
     return int(m.group(0)) if m else 1
 
 
+def _role_mode(role_name: str) -> str:
+    n = (role_name or "").upper()
+    if "ADMIN" in n:
+        return "ADMIN"
+    if "ENGINEER" in n:
+        return "ENGINEER"
+    return "VIEW"
+
+
 def build_config_text() -> str:
-    """สร้าง tacacs-generated.cfg"""
     policy = load_policy()
     roles = policy.get("roles", [])
     devices = policy.get("devices", [])
@@ -87,6 +88,8 @@ def build_config_text() -> str:
     lines.append("  accounting log = acctlog")
     lines.append("  connection log = connlog")
     lines.append("")
+
+    # Devices
     lines.append("  # Devices (map จาก policy.devices -> host)")
     for dev in devices:
         name = dev.get("name") or dev.get("id") or "OLT_UNKNOWN"
@@ -97,20 +100,47 @@ def build_config_text() -> str:
         lines.append("  }")
         lines.append("")
 
-    lines.append("  # Roles (as groups)")
+    # Roles -> groups + profile(script)  (<<< จุดสำคัญของแนวทาง B อยู่ตรงนี้)
+    lines.append("  # Roles (as groups) + RBAC policy (command authorization)")
     for r in roles:
-        name = r.get("name") or "ROLE_NO_NAME"
-        desc = r.get("description") or ""
-        priv = r.get("privilege")
+        name = (r.get("name") or "ROLE_NO_NAME").strip()
+        desc = (r.get("description") or "").strip()
+        priv_raw = r.get("privilege")
+        priv = _parse_privilege(priv_raw)
+        priv = max(1, min(15, priv))
+        mode = _role_mode(name)
+
         lines.append(f"  group = {name} {{")
-        if priv is not None:
-            lines.append(f"    # privilege: {priv}")
+        if priv_raw is not None:
+            lines.append(f"    # privilege: {priv_raw}")
         if desc:
             lines.append(f"    # description: {desc}")
+
+        lines.append("    profile {")
+        lines.append("      script {")
+        lines.append("        if (service == shell) {")
+        lines.append(f'          if (cmd == "") {{ set priv-lvl = {priv}; permit }}')
+
+        if mode == "VIEW":
+            # allow only show/exit/logout
+            lines.append(r'          if (cmd =~ "^(show|exit|logout)(\s|$)") { permit }')
+            lines.append("          deny")
+        elif mode == "ENGINEER":
+            # deny conf t / configure
+            lines.append(r'          if (cmd =~ "^(conf|configure)(\s|$)") { deny }')
+            lines.append("          permit")
+        else:
+            # ADMIN
+            lines.append("          permit")
+
+        lines.append("        }")
+        lines.append("        permit")
+        lines.append("      }")
+        lines.append("    }")
         lines.append("  }")
         lines.append("")
 
-    # include pass.secret
+    # include users
     lines.append("  # Users are defined in separate pass.secret file")
     lines.append(f'  include = "{PASS_SECRET_PATH}"')
     lines.append("}")
@@ -119,11 +149,12 @@ def build_config_text() -> str:
 
 
 def build_pass_secret_text() -> str:
+    """
+    pass.secret ให้เหลือแค่ user + member(role)
+    RBAC policy ไปอยู่ใน group profile ของ tacacs-generated.cfg
+    """
     policy = load_policy()
     users = policy.get("users", [])
-    roles = policy.get("roles", [])
-
-    role_priv = {r.get("name"): _parse_privilege(r.get("privilege")) for r in roles}
     default_pw = load_default_user_password()
 
     lines: list[str] = []
@@ -140,33 +171,21 @@ def build_pass_secret_text() -> str:
         if status not in ("active", "enable", "enabled"):
             continue
 
+        # policy.json ของคุณใช้ key = roles (string)
         role = (
             u.get("roles")
             or u.get("group")
-            or u.get("role_name")
-            or u.get("roleName")
+            or u.get("role")
             or "OLT_VIEW"
         )
         role = str(role).strip()
 
-        priv = role_priv.get(role, 1)
-        priv = max(1, min(15, priv))
         pw = u.get("password") or default_pw
 
         lines.append(f"user {username} {{")
         lines.append(f'  password login = clear "{_escape(pw)}"')
         lines.append("  password pap = login")
         lines.append(f"  member = {role}")
-        lines.append("")
-        lines.append("  profile {")
-        lines.append("    script {")
-        lines.append("      if (service == shell) {")
-        lines.append(f"        set priv-lvl = {priv}")
-        lines.append("        permit")
-        lines.append("      }")
-        lines.append("      permit")
-        lines.append("    }")
-        lines.append("  }")
         lines.append("}")
         lines.append("")
 

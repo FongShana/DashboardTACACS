@@ -16,11 +16,15 @@ def generate_config_file(config_path: Path | str = DEFAULT_CONFIG_PATH) -> tuple
     # 1) สร้าง pass.secret ก่อน (เพราะ config -P จะ include)
     generate_pass_secret_file()
 
-    # 2) สร้าง tacacs-generated.cfg
+    # 2) สร้าง tacacs-generated.cfg (เขียนแบบ atomic)
     text = build_config_text()
-    config_path.write_text(text, encoding="utf-8")
-    line_count = len(text.splitlines())
-    return str(config_path), line_count
+    tmp_path = config_path.with_suffix(".tmp")
+    tmp_path.write_text(text, encoding="utf-8")
+    # จะ chmod หรือไม่ก็ได้ แล้วแต่ policy
+    os.chmod(tmp_path, 0o644)
+    tmp_path.replace(config_path)
+
+    return str(config_path), len(text.splitlines())
 
 
 def check_config_syntax(config_path: Path | str = DEFAULT_CONFIG_PATH) -> tuple[bool, str]:
@@ -60,14 +64,13 @@ def check_config_syntax(config_path: Path | str = DEFAULT_CONFIG_PATH) -> tuple[
 
 def generate_pass_secret_file(pass_path: Path | str = PASS_SECRET_PATH) -> tuple[str, int]:
     pass_path = Path(pass_path)
+    pass_path.parent.mkdir(parents=True, exist_ok=True)
+
     text = build_pass_secret_text()
 
-    # เขียนแบบ atomic กันไฟล์ค้าง
     tmp_path = pass_path.with_suffix(".tmp")
     tmp_path.write_text(text, encoding="utf-8")
     os.chmod(tmp_path, 0o600)
     tmp_path.replace(pass_path)
 
     return str(pass_path), len(text.splitlines())
-
-
