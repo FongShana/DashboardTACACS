@@ -1,280 +1,320 @@
 # tacacs_dashboard/services/log_parser.py
 from __future__ import annotations
 
-from collections import deque, defaultdict
-from dataclasses import dataclass
-from datetime import date
 from pathlib import Path
 import re
-from typing import Iterable, Optional
+from datetime import datetime, timezone
+from collections import Counter
+from typing import Optional, Iterable
 
 LOG_DIR = Path("/var/log/tac_plus")
 
-# ---------- regex ช่วย parse ----------
-MONTH_RE = re.compile(r"^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}")
-ISO_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})")
-IP_RE = re.compile(r"\b(\d{1,3}(?:\.\d{1,3}){3})\b")
+# ---------- regex helpers ----------
+IP_RE = r"(?:\d{1,3}\.){3}\d{1,3}"
 
-# username patterns ที่เจอบ่อยกับ tac_plus-ng
-USER_RE_LIST = [
-    re.compile(r"for\s+'([^']+)'", re.IGNORECASE),
-    re.compile(r"login\s+for\s+\"([^\"]+)\"", re.IGNORECASE),
-    re.compile(r"\buser(?:name)?[:=]\s*([A-Za-z0-9_.-]+)", re.IGNORECASE),
-]
+TS_PREFIX_RE = re.compile(
+    r"^(?P<ts>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})"
+    r"(?:\s+(?P<tz>[+-]\d{4}))?\s+"
+    r"(?P<msg>.+)$"
+)
 
-# command patterns ที่เจอบ่อย
-CMD_RE_LIST = [
-    re.compile(r"\bcmd\s*=\s*'([^']+)'", re.IGNORECASE),
-    re.compile(r"\bcmd\s*=\s*\"([^\"]+)\"", re.IGNORECASE),
-    re.compile(r"\bcommand\s+\"([^\"]+)\"", re.IGNORECASE),
-    re.compile(r"\bcommand\s+'([^']+)'", re.IGNORECASE),
-    re.compile(r"\bcmd\s+(.+)$", re.IGNORECASE),  # fallback
-]
+CONN_RE = re.compile(
+    rf"^(?P<op>start|stop)\s+tcp\s+(?P<device>{IP_RE})\s+\d+\s+(?P<src>{IP_RE})\s+(?P<port>\d+)\s*$",
+    re.IGNORECASE,
+)
 
+# authc ตัวอย่าง: "10.235.110.28 ascii login for 'eng_bkk' from 10.235.110.100 on vty0 succeeded ..."
+AUTHC_LOGIN_RE = re.compile(
+    rf"^(?P<device>{IP_RE}).*?\bascii\s+login\s+for\s+['\"](?P<user>[^'\"]+)['\"].*?\bfrom\s+(?P<src>{IP_RE}).*?\b(?P<res>succeeded|failed|reject|rejected|deny|denied|error)\b",
+    re.IGNORECASE,
+)
 
-def _latest_files(prefix: str, take: int = 2) -> list[Path]:
-    files = sorted(LOG_DIR.glob(f"{prefix}-*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
-    return files[:take]
+AUTHC_LOGOUT_RE = re.compile(
+    rf"^(?P<device>{IP_RE}).*?\blogout\b.*?\bfor\b\s+['\"](?P<user>[^'\"]+)['\"].*?\bfrom\b\s+(?P<src>{IP_RE})",
+    re.IGNORECASE,
+)
 
+# acct ตัวอย่างของคุณ:
+# 2025-12-24 01:40:33 +0000 10.235.110.28 eng_bkk vty0 10.235.110.100 stop shell aaa-accounting-template 1
+ACCT_RE = re.compile(
+    rf"^(?P<device>{IP_RE})\s+(?P<user>\S+)\s+(?P<tty>\S+)\s+(?P<src>{IP_RE})\s+(?P<op>start|stop)\s+(?P<service>\S+)\s+(?P<cmd>.+)$",
+    re.IGNORECASE,
+)
 
-def _tail_lines(path: Path, limit: int) -> list[str]:
-    dq: deque[str] = deque(maxlen=limit)
-    if not path.exists():
-        return []
-    with path.open("r", encoding="utf-8", errors="replace") as f:
-        for line in f:
-            dq.append(line.rstrip("\n"))
-    return list(dq)
+# authz format จริงอาจต่างกันระหว่าง vendor — ทำเป็น generic จับ device/user/src ได้ก่อน
+AUTHZ_GENERIC_RE = re.compile(
+    rf"^(?P<device>{IP_RE})\s+(?P<user>\S+)\s+(?P<tty>\S+)\s+(?P<src>{IP_RE})\s+(?P<rest>.+)$",
+    re.IGNORECASE,
+)
 
+# ---------- core utils ----------
+def _split_ts(line: str) -> tuple[Optional[datetime], str, str]:
+    """
+    return: (dt_utc_or_none, time_str, msg_after_timestamp)
+    time_str ใช้โชว์ในหน้าเว็บ
+    """
+    s = line.strip()
+    m = TS_PREFIX_RE.match(s)
+    if not m:
+        # ไม่มี prefix เวลา -> time ว่าง แต่ยังลอง parse msg ได้
+        return None, "", s
 
-def _extract_ts(line: str) -> str:
-    m = ISO_RE.match(line)
-    if m:
-        return m.group(1)
-    m2 = MONTH_RE.match(line)
-    if m2:
-        # เก็บแบบ syslog สั้น ๆ ก็ยังช่วยเรียง/แสดงได้
-        parts = line.split()
-        return " ".join(parts[:3])  # Dec 23 07:55:46
-    return ""
+    ts = m.group("ts")
+    tz = (m.group("tz") or "").strip()
+    msg = (m.group("msg") or "").strip()
 
+    time_str = f"{ts} {tz}".strip()
+    dt = None
+    try:
+        if tz:
+            dt = datetime.strptime(f"{ts} {tz}", "%Y-%m-%d %H:%M:%S %z").astimezone(timezone.utc)
+        else:
+            dt = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    except Exception:
+        dt = None
 
-def _extract_user(line: str) -> str:
-    for r in USER_RE_LIST:
-        m = r.search(line)
-        if m:
-            return (m.group(1) or "").strip()
-    return ""
-
-
-def _extract_device_ip(line: str) -> str:
-    ips = IP_RE.findall(line)
-    # tac_plus-ng ส่วนใหญ่จะเริ่มด้วย device_ip
-    return ips[0] if ips else ""
-
-
-def _extract_src_ip(line: str) -> str:
-    ips = IP_RE.findall(line)
-    # บางบรรทัดมีทั้ง device_ip และ src_ip เช่น "from 10.x.x.x"
-    # เลือกตัวสุดท้ายเป็น src แบบคร่าว ๆ
-    return ips[-1] if len(ips) >= 2 else ""
+    return dt, time_str, msg
 
 
-def _guess_result(line: str) -> str:
-    s = line.lower()
-    if "succeed" in s or "accepted" in s or "success" in s or "permit" in s:
-        return "ACCEPT"
-    if "fail" in s or "reject" in s or "denied" in s or "error" in s:
-        return "REJECT"
-    return ""
-
-
-def _guess_action(prefix: str, line: str) -> str:
-    s = line.lower()
-    if prefix == "authc":
-        if "login" in s:
-            return "login"
-        return "authc"
-    if prefix == "conn":
-        if "disconnect" in s or "close" in s or "closed" in s or "logout" in s:
-            return "logout"
-        return "conn"
-    if prefix == "authz":
-        return "command"
-    if prefix == "acct":
-        # บาง vendor ส่ง command accounting มาใน acct
-        if "cmd" in s or "command" in s:
-            return "command"
-        return "acct"
-    return ""
-
-
-def _extract_cmd(line: str) -> str:
-    for r in CMD_RE_LIST:
-        m = r.search(line)
-        if m:
-            return (m.group(1) or "").strip()
-    return ""
-
-
-def _parse_line(prefix: str, line: str) -> dict:
-    ts = _extract_ts(line)
-    device = _extract_device_ip(line)
-    user = _extract_user(line)
-    src = _extract_src_ip(line)
-    result = _guess_result(line)
-    action = _guess_action(prefix, line)
-
-    evt = {
-        "time": ts,
-        "device": device,
-        "src": src,
-        "user": user,
-        "result": result,
-        "action": action,
-        "raw": line,
+def _event(
+    *,
+    dt: Optional[datetime],
+    time_str: str,
+    user: str = "",
+    device: str = "",
+    action: str = "",
+    result: str = "",
+    raw: str = "",
+    command: str = "",
+) -> dict:
+    # ใส่ทั้ง time และ timestamp กัน template คนละชื่อ
+    e = {
+        "time": time_str or "",
+        "timestamp": time_str or "",
+        "user": user or "",
+        "device": device or "",
+        "action": action or "",
+        "result": result or "",
+        "raw": raw or "",
     }
-
-    if action == "command":
-        evt["command"] = _extract_cmd(line)
-
-    return evt
-
-
-def _load_events_from_prefix(prefix: str, limit: int = 200) -> list[dict]:
-    # อ่านไฟล์ล่าสุด 1–2 ไฟล์ เผื่อข้ามวัน/rotate
-    files = _latest_files(prefix, take=2)
-    if not files:
-        return []
-
-    # ดึงท้ายไฟล์รวมกัน
-    lines: list[str] = []
-    per_file = max(50, limit)  # กันไม่พอ
-    for p in reversed(files):  # เก่าก่อนใหม่
-        lines.extend(_tail_lines(p, per_file))
-
-    # parse แล้วเอาเฉพาะท้าย ๆ limit
-    events = [_parse_line(prefix, ln) for ln in lines if ln.strip()]
-    return events[-limit:]
+    if command:
+        e["command"] = command
+    # key สำหรับ sort ภายใน
+    e["_ts"] = dt.timestamp() if dt else 0.0
+    return e
 
 
-# ---------- API ที่ routes/logs.py เรียก ----------
+def _read_recent_lines(files: list[Path], max_lines_each: int = 2000) -> Iterable[str]:
+    for p in files:
+        try:
+            lines = p.read_text(encoding="utf-8", errors="ignore").splitlines()
+            if max_lines_each and len(lines) > max_lines_each:
+                lines = lines[-max_lines_each:]
+            for line in lines:
+                if line.strip():
+                    yield line
+        except Exception:
+            continue
+
+
+def _latest_files(glob_pat: str, max_files: int = 4) -> list[Path]:
+    files = sorted(LOG_DIR.glob(glob_pat), key=lambda x: x.stat().st_mtime, reverse=True)
+    return files[:max_files]
+
+
+# ---------- parsers ----------
+def _parse_conn(line: str) -> Optional[dict]:
+    dt, time_str, msg = _split_ts(line)
+    m = CONN_RE.match(msg)
+    if not m:
+        return None
+    op = m.group("op").lower()
+    device = m.group("device")
+    src = m.group("src")
+    action = f"conn_{op}"
+    return _event(dt=dt, time_str=time_str, user="", device=device, action=action, result="", raw=line.strip())
+
+
+def _parse_authc(line: str) -> Optional[dict]:
+    dt, time_str, msg = _split_ts(line)
+
+    m = AUTHC_LOGIN_RE.match(msg)
+    if m:
+        device = m.group("device")
+        user = m.group("user")
+        res = (m.group("res") or "").lower()
+        result = "ACCEPT" if "succeed" in res else "REJECT"
+        return _event(
+            dt=dt,
+            time_str=time_str,
+            user=user,
+            device=device,
+            action="login",
+            result=result,
+            raw=line.strip(),
+        )
+
+    m = AUTHC_LOGOUT_RE.match(msg)
+    if m:
+        device = m.group("device")
+        user = m.group("user")
+        return _event(
+            dt=dt,
+            time_str=time_str,
+            user=user,
+            device=device,
+            action="logout",
+            result="OK",
+            raw=line.strip(),
+        )
+
+    return None
+
+
+def _parse_acct(line: str) -> Optional[dict]:
+    dt, time_str, msg = _split_ts(line)
+    m = ACCT_RE.match(msg)
+    if not m:
+        return None
+
+    device = m.group("device")
+    user = m.group("user")
+    op = m.group("op").lower()
+    service = (m.group("service") or "").lower()
+    cmd = (m.group("cmd") or "").strip()
+
+    # เอาไว้โชว์ใน Authentication Logs ด้วย (action=acct_start/acct_stop)
+    return _event(
+        dt=dt,
+        time_str=time_str,
+        user=user,
+        device=device,
+        action=f"acct_{op}",
+        result="OK",
+        raw=line.strip(),
+        command=cmd if service == "shell" else "",
+    )
+
+
+def _parse_authz(line: str) -> Optional[dict]:
+    dt, time_str, msg = _split_ts(line)
+    m = AUTHZ_GENERIC_RE.match(msg)
+    if not m:
+        return None
+
+    device = m.group("device")
+    user = m.group("user")
+    rest = (m.group("rest") or "").strip()
+
+    # เดา result แบบง่าย ๆ (ถ้า log มีคำ permit/deny)
+    rest_l = rest.lower()
+    if any(x in rest_l for x in ["permit", "allow", "accept", "pass", "ok"]):
+        result = "ACCEPT"
+    elif any(x in rest_l for x in ["deny", "reject", "fail", "error"]):
+        result = "REJECT"
+    else:
+        result = ""
+
+    return _event(
+        dt=dt,
+        time_str=time_str,
+        user=user,
+        device=device,
+        action="authz",
+        result=result,
+        raw=line.strip(),
+    )
+
+
+# ---------- public API (ต้องมีให้ routes import ได้) ----------
 def get_recent_events(limit: int = 200) -> list[dict]:
     """
-    ใช้สำหรับตาราง auth (login/logout)
+    ใช้ในหน้า Logs & Audit (Authentication Logs table)
+    รวม: authc + authz + acct + conn
     """
-    authc = _load_events_from_prefix("authc", limit=limit)
-    conn = _load_events_from_prefix("conn", limit=limit)
+    events: list[dict] = []
 
-    # รวมกันแล้วเรียงแบบ “แสดงใหม่ก่อน” ด้วย heuristic:
-    merged = authc + conn
-    # ถ้า time ว่าง จะคงท้าย ๆ ไว้ก่อน
-    merged.sort(key=lambda e: (e.get("time") or ""), reverse=True)
-    return merged[:limit]
+    if not LOG_DIR.exists():
+        return []
+
+    sources = [
+        ("authc", _latest_files("authc-*.log"), _parse_authc),
+        ("authz", _latest_files("authz-*.log"), _parse_authz),
+        ("acct", _latest_files("acct-*.log"), _parse_acct),
+        ("conn", _latest_files("conn-*.log"), _parse_conn),
+    ]
+
+    for _, files, parser in sources:
+        for line in _read_recent_lines(files, max_lines_each=3000):
+            e = parser(line)
+            if e:
+                events.append(e)
+
+    events.sort(key=lambda x: x.get("_ts", 0.0), reverse=True)
+    out = events[: max(0, int(limit))]
+    for e in out:
+        e.pop("_ts", None)
+    return out
 
 
 def get_command_events(limit: int = 200) -> list[dict]:
     """
-    ดึง command จาก authz + acct (บางเครื่องส่ง command ไป acct)
+    ใช้ในหน้า Logs & Audit (Command Logs table)
+    ดึงจาก acct log เป็นหลัก (เพราะมี cmd ต่อท้าย)
     """
-    authz = _load_events_from_prefix("authz", limit=limit)
-    acct = _load_events_from_prefix("acct", limit=limit)
+    cmds: list[dict] = []
+    files = _latest_files("acct-*.log")
+    for line in _read_recent_lines(files, max_lines_each=6000):
+        e = _parse_acct(line)
+        if not e:
+            continue
+        cmd = (e.get("command") or "").strip()
+        if cmd:
+            e["action"] = "command"
+            cmds.append(e)
 
-    merged = []
-    for e in (authz + acct):
-        if e.get("action") == "command":
-            merged.append(e)
-
-    merged.sort(key=lambda e: (e.get("time") or ""), reverse=True)
-    return merged[:limit]
+    cmds.sort(key=lambda x: x.get("_ts", 0.0), reverse=True)
+    out = cmds[: max(0, int(limit))]
+    for e in out:
+        e.pop("_ts", None)
+    return out
 
 
 def get_user_stats() -> list[dict]:
     """
-    สรุป per-user (success/fail/last_seen) จาก auth events
-    คืน list ของ dict เพื่อ render ง่าย
+    สรุปง่าย ๆ ต่อ user (ใช้ใน card/ตารางสรุป)
     """
-    events = get_recent_events(limit=1000)
-    stats = defaultdict(lambda: {"user": "", "success": 0, "fail": 0, "last_seen": ""})
+    events = get_recent_events(limit=2000)
+    c = Counter(e.get("user") for e in events if e.get("user"))
+    return [{"user": u, "count": n} for u, n in c.most_common()]
 
-    for e in events:
-        user = e.get("user") or ""
-        if not user:
-            continue
-        st = stats[user]
-        st["user"] = user
 
-        res = (e.get("result") or "").upper()
-        if res in ("ACCEPT", "OK", "PASS", "SUCCESS"):
-            st["success"] += 1
-        elif res in ("REJECT", "FAIL", "ERROR"):
-            st["fail"] += 1
-
-        t = e.get("time") or ""
-        if t and t > (st["last_seen"] or ""):
-            st["last_seen"] = t
-
-    # เรียงตาม last_seen ใหม่สุด
-    return sorted(stats.values(), key=lambda x: x.get("last_seen") or "", reverse=True)
-
-def get_summary():
+def get_summary() -> dict:
     """
-    ใช้บนหน้า dashboard: สรุปจำนวน event/login/cmd ล่าสุดแบบง่าย ๆ
-    (ทำแบบ safe: ไม่มี log ก็ไม่พัง)
+    ใช้ใน dashboard.py (กัน ImportError)
     """
-    try:
-        recent = get_recent_events(limit=200)
-        cmds = get_command_events(limit=200)
+    events = get_recent_events(limit=2000)
+    cmd_events = get_command_events(limit=2000)
 
-        success = sum(
-            1 for e in recent
-            if (e.get("result") or "").upper() in ("ACCEPT", "OK", "PASS", "SUCCESS")
-        )
-        fail = sum(
-            1 for e in recent
-            if (e.get("result") or "").upper() in ("REJECT", "FAIL", "ERROR")
-        )
+    users = {e.get("user") for e in events if e.get("user")}
+    devices = {e.get("device") for e in events if e.get("device")}
 
-        uniq_users = len({e.get("user") for e in recent if e.get("user")})
-        uniq_devices = len({e.get("device") for e in recent if e.get("device")})
+    success = sum(1 for e in events if (e.get("result") or "").upper() in ("ACCEPT", "OK", "PASS", "SUCCESS"))
+    fail = sum(1 for e in events if (e.get("result") or "").upper() in ("REJECT", "FAIL", "ERROR"))
 
-        return {
-            "total_events": len(recent),
-            "total_cmd": len(cmds),
-            "success": success,
-            "fail": fail,
-            "unique_users": uniq_users,
-            "unique_devices": uniq_devices,
-        }
-    except Exception:
-        return {
-            "total_events": 0,
-            "total_cmd": 0,
-            "success": 0,
-            "fail": 0,
-            "unique_users": 0,
-            "unique_devices": 0,
-        }
+    return {
+        "auth_events": len(events),
+        "command_logs": len(cmd_events),
+        "success": success,
+        "failed": fail,
+        "users": len(users),
+        "devices": len(devices),
+    }
 
-def get_all_events(limit=1000):
+
+def get_all_events(limit: int = 5000) -> list[dict]:
     """
-    ใช้ให้ API เรียกเอา event ทั้งหมดแบบรวม ๆ
-    คืนเป็น list ที่รวม auth events + command events
+    ใช้ใน api.py (กัน ImportError)
     """
-    auth_events = get_recent_events(limit=limit) or []
-    cmd_events = get_command_events(limit=limit) or []
+    return get_recent_events(limit=limit)
 
-    combined = []
-
-    for e in auth_events:
-        x = dict(e)
-        x.setdefault("event_type", "auth")
-        combined.append(x)
-
-    for e in cmd_events:
-        x = dict(e)
-        x.setdefault("event_type", "cmd")
-        combined.append(x)
-
-    # ไม่บังคับ sort เพราะ format เวลาใน log อาจไม่เหมือนกัน
-    return combined
