@@ -3,6 +3,7 @@ import re
 import time
 from pathlib import Path
 import pexpect
+import shutil
 
 PROMPT_RE = re.compile(r"[>#]\s*$")
 
@@ -18,7 +19,8 @@ def telnet_exec_commands(
     เปิด telnet -> login -> (enable ถ้าจำเป็น) -> ยิง commands -> ออก
     คืนค่า output ทั้งหมด (เผื่อ debug)
     """
-    child = pexpect.spawn(f"telnet {host}", encoding="utf-8", timeout=timeout)
+    TELNET_BIN = shutil.which("telnet") or "/usr/bin/telnet"
+    child = pexpect.spawn(TELNET_BIN, [host], encoding="utf-8", timeout=timeout)
     out_chunks: list[str] = []
 
     def _expect(patterns):
