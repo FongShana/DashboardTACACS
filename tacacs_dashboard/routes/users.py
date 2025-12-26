@@ -12,7 +12,7 @@ from tacacs_dashboard.services.policy_store import (
 )
 from tacacs_dashboard.services.tacacs_config import _read_env
 from tacacs_dashboard.services.tacacs_apply import generate_config_file, check_config_syntax
-from tacacs_dashboard.services.olt_provision import provision_user_on_olt
+from tacacs_dashboard.services.olt_provision import provision_user_on_olt, deprovision_user_on_olt
 
 bp = Blueprint("users", __name__)
 
@@ -144,9 +144,49 @@ def _maybe_provision_to_olts(username: str, role: str, status: str) -> None:
             flash(f"Provision '{username}' -> OLT {ip} ล้มเหลว: {e}", "error")
 
 
+def _maybe_deprovision_from_olts(username: str) -> None:
+    """
+    ถ้าเปิด OLT_AUTO_DEPROVISION=1:
+      - telnet ไปลบ user-name บน OLT
+      - save ขึ้นกับ OLT_AUTO_WRITE (0/1)
+    """
+    auto = (_read_env("OLT_AUTO_DEPROVISION", "0") or "0").strip().lower()
+    if auto not in ("1", "true", "yes"):
+        return
+
+    policy = load_policy()
+    olt_ips = _get_olt_ip_list(policy)
+    if not olt_ips:
+        flash(
+            "เปิด OLT_AUTO_DEPROVISION แต่ไม่มี OLT ที่ Online ใน policy.json และไม่ได้ตั้ง OLT_DEFAULT_IP",
+            "warning",
+        )
+        return
+
+    auto_write = (_read_env("OLT_AUTO_WRITE", "0") or "0").strip().lower()
+    save = auto_write in ("1", "true", "yes")
+
+    for ip in olt_ips:
+        try:
+            out = deprovision_user_on_olt(
+                ip,
+                username=username,
+                save=save,
+                dry_run=False,
+            )
+            msg = out if len(out) <= 400 else out[:400] + " ... (truncated)"
+            flash(
+                f"Deprovision '{username}' -> OLT {ip} สำเร็จ (save={'ON' if save else 'OFF'}): {msg}",
+                "success",
+            )
+        except Exception as e:
+            flash(f"Deprovision '{username}' -> OLT {ip} ล้มเหลว: {e}", "error")
+
+
 # -----------------------
 # Pages
 # -----------------------
+
 @bp.route("/")
 def index():
     policy = load_policy()
@@ -221,9 +261,19 @@ def delete_user_form(username: str):
 
     flash(f"ลบผู้ใช้ {username} เรียบร้อย", "success")
 
+    ok2 = _run_generate_check_restart_and_flash()
+    if ok2:
+        _maybe_deprovision_from_olts(username)
+
+    return redirect(url_for("users.index"))
+
     # update tacacs config + restart
-    _run_generate_check_restart_and_flash()
-    # NOTE: ยังไม่ลบจาก OLT ตามที่คุยไว้
+    ok2 = _run_generate_check_restart_and_flash()
+
+    # ✅ ลบจาก OLT (ถ้าคุณเปิด auto deprovision)
+    if ok2:
+        _maybe_deprovision_from_olts(username)
+
 
     return redirect(url_for("users.index"))
 
