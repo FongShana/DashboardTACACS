@@ -1,26 +1,26 @@
+from __future__ import annotations
+
 from pathlib import Path
 import subprocess
 import os
 
 from .tacacs_config import build_config_text, build_pass_secret_text, PASS_SECRET_PATH
 
-CONFIG_ID = "nt-tacacs"   # ต้องตรงกับ id ในไฟล์ config
-
 DEFAULT_CONFIG_PATH = Path("/home/trainee25/tacacs-web/tacacs-generated.cfg")
-
 TACACS_BIN = "/usr/local/sbin/tac_plus-ng"
+TACACS_SERVICE = "tac_plus-ng"
+
 
 def generate_config_file(config_path: Path | str = DEFAULT_CONFIG_PATH) -> tuple[str, int]:
     config_path = Path(config_path)
 
-    # 1) สร้าง pass.secret ก่อน (เพราะ config -P จะ include)
+    # 1) สร้าง pass.secret ก่อน (เพราะ config include)
     generate_pass_secret_file()
 
-    # 2) สร้าง tacacs-generated.cfg (เขียนแบบ atomic)
+    # 2) สร้าง tacacs-generated.cfg (atomic)
     text = build_config_text()
     tmp_path = config_path.with_suffix(".tmp")
     tmp_path.write_text(text, encoding="utf-8")
-    # จะ chmod หรือไม่ก็ได้ แล้วแต่ policy
     os.chmod(tmp_path, 0o644)
     tmp_path.replace(config_path)
 
@@ -45,12 +45,9 @@ def check_config_syntax(config_path: Path | str = DEFAULT_CONFIG_PATH) -> tuple[
             timeout=10,
         )
     except FileNotFoundError:
-        return False, (
-            f"ไม่พบคำสั่ง {TACACS_BIN} ใน PATH. "
-            "ลองเช็ค path ของ tac_plus-ng หรือแก้ TACACS_BIN ใน tacacs_apply.py"
-        )
+        return False, f"ไม่พบคำสั่ง {TACACS_BIN} (แก้ TACACS_BIN ใน tacacs_apply.py)"
     except subprocess.TimeoutExpired:
-        return False, "คำสั่ง tac_plus-ng -P ใช้เวลานานเกินไป (timeout)."
+        return False, "คำสั่ง tac_plus-ng -P timeout"
 
     out = (result.stdout or "").strip()
     err = (result.stderr or "").strip()
@@ -74,3 +71,24 @@ def generate_pass_secret_file(pass_path: Path | str = PASS_SECRET_PATH) -> tuple
     tmp_path.replace(pass_path)
 
     return str(pass_path), len(text.splitlines())
+
+
+def restart_tacacs_daemon() -> tuple[bool, str]:
+    """
+    restart tac_plus-ng เพื่อให้โหลด config/pass.secret ใหม่
+    ต้องมี sudoers ให้ user ที่รัน web เรียก systemctl restart ได้แบบไม่ถามรหัส
+    """
+    try:
+        r = subprocess.run(
+            ["sudo", "systemctl", "restart", TACACS_SERVICE],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if r.returncode == 0:
+            return True, "tac_plus-ng restarted"
+        msg = (r.stderr or r.stdout or "restart failed").strip()
+        return False, msg
+    except Exception as e:
+        return False, str(e)
+
