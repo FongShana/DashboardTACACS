@@ -6,7 +6,7 @@ from .olt_telnet import telnet_exec_commands
 
 
 def role_to_author_template(role: str) -> int:
-    role = (role or "").strip()
+    role = (role or "").strip().upper()
     if role == "OLT_ADMIN":
         return 128
     if role == "OLT_ENGINEER":
