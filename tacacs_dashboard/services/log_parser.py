@@ -34,6 +34,12 @@ AUTHC_LOGOUT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# new template for authc log 
+AUTHC_COL_RE = re.compile(
+    rf"^(?P<device>{IP_RE})\s+(?P<user>\S+)\s+(?P<tty>\S+)\s+(?P<src>{IP_RE})\s+(?P<rest>.+)$",
+    re.IGNORECASE,
+)
+
 # acct ตัวอย่างของคุณ:
 # 2025-12-24 01:40:33 +0000 10.235.110.28 eng_bkk vty0 10.235.110.100 stop shell aaa-accounting-template 1
 ACCT_RE = re.compile(
@@ -138,6 +144,7 @@ def _parse_conn(line: str) -> Optional[dict]:
 def _parse_authc(line: str) -> Optional[dict]:
     dt, time_str, msg = _split_ts(line)
 
+    # --- แบบเก่า: "... ascii login for 'user' from ... succeeded/failed" ---
     m = AUTHC_LOGIN_RE.match(msg)
     if m:
         device = m.group("device")
@@ -168,7 +175,66 @@ def _parse_authc(line: str) -> Optional[dict]:
             raw=line.strip(),
         )
 
+    # --- ✅ แบบใหม่ (แบบที่คุณมี): "<device> <user> <tty> <src> ascii login succeeded/failed" ---
+    m = AUTHC_COL_RE.match(msg)
+    if not m:
+        return None
+
+    device = m.group("device")
+    user = m.group("user")
+    rest = (m.group("rest") or "").strip()
+    rest_l = rest.lower()
+
+    # login
+    if rest_l.startswith("ascii login"):
+        if "succeed" in rest_l or "success" in rest_l:
+            result = "ACCEPT"
+        elif "fail" in rest_l or "deny" in rest_l or "reject" in rest_l:
+            result = "REJECT"
+        else:
+            result = ""
+        return _event(
+            dt=dt,
+            time_str=time_str,
+            user=user,
+            device=device,
+            action="login",
+            result=result,
+            raw=line.strip(),
+        )
+
+    # enable (ถ้าคุณอยากให้ขึ้นใน authc ด้วย)
+    if rest_l.startswith("enable"):
+        if "succeed" in rest_l or "permitted" in rest_l:
+            result = "ACCEPT"
+        elif "fail" in rest_l or "deny" in rest_l or "denied" in rest_l:
+            result = "REJECT"
+        else:
+            result = ""
+        return _event(
+            dt=dt,
+            time_str=time_str,
+            user=user,
+            device=device,
+            action="enable",
+            result=result,
+            raw=line.strip(),
+        )
+
+    # logout (บางเครื่องอาจ log เป็น "logout ..." ในไฟล์ authc)
+    if "logout" in rest_l:
+        return _event(
+            dt=dt,
+            time_str=time_str,
+            user=user,
+            device=device,
+            action="logout",
+            result="OK",
+            raw=line.strip(),
+        )
+
     return None
+
 
 
 def _parse_acct(line: str) -> Optional[dict]:
