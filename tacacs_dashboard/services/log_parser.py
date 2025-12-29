@@ -241,7 +241,7 @@ def get_recent_events(limit: int = 200) -> list[dict]:
         ("authc", _latest_files("authc-*.log"), _parse_authc),
         ("authz", _latest_files("authz-*.log"), _parse_authz),
         ("acct", _latest_files("acct-*.log"), _parse_acct),
-        ("conn", _latest_files("conn-*.log"), _parse_conn),
+       # ("conn", _latest_files("conn-*.log"), _parse_conn),
     ]
 
     for _, files, parser in sources:
