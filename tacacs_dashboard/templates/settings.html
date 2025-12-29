@@ -20,8 +20,8 @@
   <p>
     ปุ่มนี้จะสร้างไฟล์ config ที่
     <code>/home/trainee25/tacacs-web/tacacs-generated.cfg</code>
-    และรันคำสั่ง <code>tac_plus-ng -P</code> เพื่อตรวจ syntax เท่านั้น
-    ยังไม่ restart service และยังไม่ส่งผลกับ OLT จริง
+    และรันคำสั่ง <code>tac_plus-ng -P</code> เพื่อตรวจ syntax และ
+    restart service ส่งผลกับ OLT จริง
   </p>
 
   <div style="display:flex; gap:0.75rem; flex-wrap:wrap; margin-top:0.75rem;">
@@ -30,10 +30,6 @@
         Generate &amp; Check
       </button>
     </form>
-
-    <a href="{{ url_for('settings.download_config') }}" class="btn btn-secondary">
-      Download config
-    </a>
   </div>
 </section>
 

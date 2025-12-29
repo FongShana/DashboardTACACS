@@ -204,13 +204,3 @@ def generate_config():
     return redirect(url_for("settings.index"))
 
 
-@bp.get("/download-config")
-def download_config():
-    path, _line_count = generate_config_file()
-    return send_file(
-        path,
-        mimetype="text/plain",
-        as_attachment=True,
-        download_name="tacacs-generated.cfg",
-    )
-
