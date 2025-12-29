@@ -70,15 +70,13 @@ def _run_generate_check_restart_and_flash() -> bool:
 
 def _get_olt_ip_list(policy: dict) -> list[str]:
     """
-    คืน list ของ IP OLT ที่จะ provision
-    - ถ้ามี policy.devices -> ใช้ทุกตัวที่มี address/ip
-      (แนะนำ: เอาเฉพาะ status=Online ถ้ามี)
+    คืน list ของ IP OLT ที่จะ provision/deprovision
+    - ถ้ามี policy.devices -> ใช้ทุกตัวที่มี address/ip (แนะนำ filter Online)
     - ถ้าไม่มี -> ใช้ OLT_DEFAULT_IP (ถ้ามี)
     """
     ips: list[str] = []
 
     for d in (policy.get("devices") or []):
-        # filter เฉพาะ Online ถ้ามี status
         st = (d.get("status") or "").strip().lower()
         if st and st not in ("online", "up"):
             continue
@@ -92,7 +90,6 @@ def _get_olt_ip_list(policy: dict) -> list[str]:
         if default_ip:
             ips = [default_ip]
 
-    # กันซ้ำ
     uniq: list[str] = []
     for ip in ips:
         if ip not in uniq:
@@ -101,11 +98,6 @@ def _get_olt_ip_list(policy: dict) -> list[str]:
 
 
 def _maybe_provision_to_olts(username: str, role: str, status: str) -> None:
-    """
-    ถ้าเปิด OLT_AUTO_PROVISION=1:
-      - telnet ไปสร้าง/ผูก user-name บน OLT ตาม role
-      - save ขึ้นกับ OLT_AUTO_WRITE (0/1)
-    """
     # provision เฉพาะ Active
     if (status or "").strip().lower() not in ("active", "enable", "enabled"):
         return
@@ -145,11 +137,6 @@ def _maybe_provision_to_olts(username: str, role: str, status: str) -> None:
 
 
 def _maybe_deprovision_from_olts(username: str) -> None:
-    """
-    ถ้าเปิด OLT_AUTO_DEPROVISION=1:
-      - telnet ไปลบ user-name บน OLT
-      - save ขึ้นกับ OLT_AUTO_WRITE (0/1)
-    """
     auto = (_read_env("OLT_AUTO_DEPROVISION", "0") or "0").strip().lower()
     if auto not in ("1", "true", "yes"):
         return
@@ -186,14 +173,12 @@ def _maybe_deprovision_from_olts(username: str) -> None:
 # -----------------------
 # Pages
 # -----------------------
-
 @bp.route("/")
 def index():
     policy = load_policy()
     users = policy.get("users", [])
     roles = policy.get("roles", [])
 
-    # คำนวณจำนวน members ของแต่ละ role จาก users จริง ๆ
     user_roles = [u.get("roles") or u.get("role") for u in users]
     for r in roles:
         name = r.get("name")
@@ -233,14 +218,10 @@ def create_user_form():
         flash(f"User {username} มีอยู่แล้ว", "error")
         return redirect(url_for("users.index"))
 
-    # 1) update policy.json
     upsert_user(username=username, role=role, status=status)
     flash(f"เพิ่มผู้ใช้ {username} เรียบร้อย", "success")
 
-    # 2) generate + check + restart
     ok = _run_generate_check_restart_and_flash()
-
-    # 3) provision ไป OLT (ถ้าเปิด auto)
     if ok:
         _maybe_provision_to_olts(username=username, role=role, status=status)
 
@@ -264,16 +245,6 @@ def delete_user_form(username: str):
     ok2 = _run_generate_check_restart_and_flash()
     if ok2:
         _maybe_deprovision_from_olts(username)
-
-    return redirect(url_for("users.index"))
-
-    # update tacacs config + restart
-    ok2 = _run_generate_check_restart_and_flash()
-
-    # ✅ ลบจาก OLT (ถ้าคุณเปิด auto deprovision)
-    if ok2:
-        _maybe_deprovision_from_olts(username)
-
 
     return redirect(url_for("users.index"))
 
@@ -322,14 +293,10 @@ def edit_user_submit(username):
         flash(f"Role {new_role} ไม่มีอยู่ในระบบ", "error")
         return redirect(url_for("users.edit_user_form", username=username))
 
-    # 1) update policy.json
     upsert_user(username=username, role=new_role, status=new_status)
     flash(f"อัปเดตผู้ใช้ {username} เรียบร้อยแล้ว", "success")
 
-    # 2) generate + check + restart
     ok = _run_generate_check_restart_and_flash()
-
-    # 3) provision update ไป OLT (ถ้าเปิด auto)
     if ok:
         _maybe_provision_to_olts(username=username, role=new_role, status=new_status)
 
@@ -337,68 +304,8 @@ def edit_user_submit(username):
 
 
 # -----------------------
-# Roles form actions
+# Roles: เหลือไว้แค่ Edit (ตัด Create/Delete ออก)
 # -----------------------
-@bp.post("/roles/create")
-def create_role_form():
-    name = (request.form.get("name") or "").strip()
-    description = (request.form.get("description") or "").strip()
-    privilege = (request.form.get("privilege") or "").strip()
-
-    if not name:
-        flash("กรุณากรอกชื่อ Role", "error")
-        return redirect(url_for("users.index"))
-
-    policy = load_policy()
-    roles = policy.get("roles", [])
-
-    if any((r.get("name") or "").strip() == name for r in roles):
-        flash(f"Role {name} มีอยู่แล้ว", "error")
-        return redirect(url_for("users.index"))
-
-    roles.append({
-        "name": name,
-        "description": description,
-        "privilege": privilege,
-        "members": 0,
-    })
-    policy["roles"] = roles
-    save_policy(policy)
-
-    flash(f"เพิ่ม Role {name} เรียบร้อย", "success")
-    _run_generate_check_restart_and_flash()
-    return redirect(url_for("users.index"))
-
-
-@bp.post("/roles/delete/<name>")
-def delete_role_form(name):
-    name = (name or "").strip()
-    policy = load_policy()
-    roles = policy.get("roles", [])
-    users = policy.get("users", [])
-
-    used_by = [u.get("username") for u in users
-               if (u.get("roles") or u.get("role")) == name]
-    if used_by:
-        flash(
-            f"ไม่สามารถลบ Role {name} ได้ (ถูกใช้งานโดย: {', '.join(used_by)})",
-            "error"
-        )
-        return redirect(url_for("users.index"))
-
-    new_roles = [r for r in roles if (r.get("name") or "").strip() != name]
-    if len(new_roles) == len(roles):
-        flash(f"ไม่พบ Role {name}", "error")
-        return redirect(url_for("users.index"))
-
-    policy["roles"] = new_roles
-    save_policy(policy)
-
-    flash(f"ลบ Role {name} เรียบร้อย", "success")
-    _run_generate_check_restart_and_flash()
-    return redirect(url_for("users.index"))
-
-
 @bp.get("/roles/<name>/edit")
 def edit_role_form(name):
     policy = load_policy()
