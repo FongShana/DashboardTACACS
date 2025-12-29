@@ -6,6 +6,9 @@ import re
 from datetime import datetime, timezone
 from collections import Counter
 from typing import Optional, Iterable
+from zoneinfo import ZoneInfo
+
+DISPLAY_TZ = ZoneInfo("Asia/Bangkok")  # UTC+7
 
 LOG_DIR = Path("/var/log/tac_plus")
 
@@ -69,18 +72,24 @@ def _split_ts(line: str) -> tuple[Optional[datetime], str, str]:
     tz = (m.group("tz") or "").strip()
     msg = (m.group("msg") or "").strip()
 
-    time_str = f"{ts} {tz}".strip()
     dt = None
     try:
         if tz:
-            dt = datetime.strptime(f"{ts} {tz}", "%Y-%m-%d %H:%M:%S %z").astimezone(timezone.utc)
+            dt = datetime.strptime(f"{ts} {tz}", "%Y-%m-%d %H:%M:%S %z")
         else:
+            # ถ้าไม่มี tz ในบรรทัด ให้ถือว่าเป็น UTC (ตามเคสคุณ)
             dt = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
     except Exception:
         dt = None
 
-    return dt, time_str, msg
+    if dt:
+        dt_local = dt.astimezone(DISPLAY_TZ)
+        time_str = dt_local.strftime("%Y-%m-%d %H:%M:%S %z")
+        return dt_local, time_str, msg
 
+    # fallback
+    time_str = f"{ts} {tz}".strip()
+    return None, time_str, msg
 
 def _event(
     *,
