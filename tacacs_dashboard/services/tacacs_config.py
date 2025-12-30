@@ -85,8 +85,8 @@ def _user_profile_lines(role_name: str, priv: int) -> list[str]:
         lines.append("        deny")
 
     elif role == "OLT_ENGINEER":
-        # ห้ามเข้าโหมด config
-        lines.append(r"        if (cmd =~ /^(conf|config|configure)(\s|$)/) deny")
+        # (optional) กันคำสั่งอันตรายจาก TACACS อีกชั้น
+        lines.append(r"        if (cmd =~ /^(reload|power)(\s|$)/) deny")
         lines.append("        permit")
 
     else:
