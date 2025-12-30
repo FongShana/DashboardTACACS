@@ -58,7 +58,7 @@
           <td>{{ e.role }}</td>
           <td>{{ e.device }}</td>
           <td>{{ e.action }}</td>
-          <td class="{{ 'status-ok' if e.result == 'success' else 'status-fail' }}">
+          <td class="{{ 'status-ok' if e.result in ['OK','ACCEPT','SUCCESS','PASS'] else 'status-fail' if e.result in ['REJECT','FAIL','ERROR'] else '' }}">
             {{ e.result }}
           </td>
         </tr>
