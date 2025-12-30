@@ -10,15 +10,15 @@
 
   <div class="card-grid">
     <div class="card">
-      <div class="card-label">Active TACACS+ Users (Sample)</div>
-      <div class="card-value">{{ summary.active_users }}</div>
-      <div class="card-sub">จำนวนบัญชีที่มีการ login ผ่าน TACACS+ (จาก log ตัวอย่าง)</div>
+      <div class="card-label">Recent TACACS+ Users</div>
+      <div class="card-value">{{ summary.recent_users }}</div>
+      <div class="card-sub">จำนวนบัญชีที่มีการ login ล่าสุดเข้าสู่ OLT</div>
     </div>
 
     <div class="card">
       <div class="card-label">Failed Login Attempts</div>
       <div class="card-value card-value-danger">{{ summary.failed_logins }}</div>
-      <div class="card-sub">นับจากเหตุการณ์ login ที่ result=failed</div>
+      <div class="card-sub">นับจากเหตุการณ์ login ที่ result=rejected</div>
     </div>
 
     <div class="card">
@@ -30,7 +30,7 @@
     <div class="card">
       <div class="card-label">Roles / Privilege Profiles (from logs)</div>
       <div class="card-value">{{ summary.roles }}</div>
-      <div class="card-sub">นับจาก role ที่พบใน log (ยกเว้น "-")</div>
+      <div class="card-sub">นับจาก role ที่พบใน log</div>
     </div>
   </div>
 </section>
