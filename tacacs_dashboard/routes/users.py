@@ -4,6 +4,9 @@ from __future__ import annotations
 import subprocess
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 
+import re
+from tacacs_dashboard.services.log_parser import get_last_login_map
+
 from tacacs_dashboard.services.policy_store import (
     load_policy,
     save_policy,
@@ -183,6 +186,24 @@ def index():
     for r in roles:
         name = r.get("name")
         r["members"] = user_roles.count(name)
+
+    # ✅ last_login จาก authc log (login ACCEPT ล่าสุด)
+    login_map = get_last_login_map(successful_only=True)
+
+    for u in users:
+        uname = (u.get("username") or u.get("name") or "").strip()
+        if not uname:
+            continue
+
+        t = login_map.get(uname)
+        if t:
+            # ถ้าอยากให้เหมือนเดิม (ไม่โชว์ +0700) -> ตัด timezone ทิ้ง
+            t2 = re.sub(r"\s[+-]\d{4}$", "", t)
+            u["last_login"] = t2
+        else:
+            # ถ้าไม่มี log ก็เป็น "-"
+            u["last_login"] = u.get("last_login") or "-"
+
 
     return render_template(
         "users.html",

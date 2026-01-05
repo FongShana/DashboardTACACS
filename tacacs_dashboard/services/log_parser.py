@@ -363,6 +363,46 @@ def get_user_stats() -> list[dict]:
     c = Counter(e.get("user") for e in events if e.get("user"))
     return [{"user": u, "count": n} for u, n in c.most_common()]
 
+def get_last_login_map(
+    *,
+    max_files: int = 4,
+    max_lines_each: int = 8000,
+    successful_only: bool = True,
+) -> dict[str, str]:
+    """
+    คืนค่า dict: { username: "YYYY-MM-DD HH:MM:SS +0700" }
+    ดึงจาก authc-*.log โดยดู action=login
+    - successful_only=True: เอาเฉพาะ ACCEPT
+    """
+    last_time_by_user: dict[str, str] = {}
+    last_ts_by_user: dict[str, float] = {}
+
+    if not LOG_DIR.exists():
+        return {}
+
+    files = _latest_files("authc-*.log", max_files=max_files)
+    for line in _read_recent_lines(files, max_lines_each=max_lines_each):
+        e = _parse_authc(line)
+        if not e:
+            continue
+        if (e.get("action") or "").lower() != "login":
+            continue
+
+        user = (e.get("user") or "").strip()
+        if not user:
+            continue
+
+        res = (e.get("result") or "").upper()
+        if successful_only and res not in ("ACCEPT", "OK", "SUCCESS", "PASS"):
+            continue
+
+        ts = float(e.get("_ts") or 0.0)
+        if ts >= float(last_ts_by_user.get(user, -1.0)):
+            last_ts_by_user[user] = ts
+            last_time_by_user[user] = (e.get("time") or e.get("timestamp") or "").strip()
+
+    return last_time_by_user
+
 
 def get_summary() -> dict:
     """
