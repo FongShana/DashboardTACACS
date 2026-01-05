@@ -167,7 +167,7 @@ def _parse_authc(line: str) -> Optional[dict]:
             device=device,
             action="login",
             result=result,
-            raw=line.strip(),
+            raw=msg,
         )
 
     m = AUTHC_LOGOUT_RE.match(msg)
@@ -209,7 +209,7 @@ def _parse_authc(line: str) -> Optional[dict]:
             device=device,
             action="login",
             result=result,
-            raw=line.strip(),
+            raw=msg,
         )
 
     # enable (ถ้าคุณอยากให้ขึ้นใน authc ด้วย)
@@ -227,7 +227,7 @@ def _parse_authc(line: str) -> Optional[dict]:
             device=device,
             action="enable",
             result=result,
-            raw=line.strip(),
+            raw=msg,
         )
 
     # logout (บางเครื่องอาจ log เป็น "logout ..." ในไฟล์ authc)
@@ -239,7 +239,7 @@ def _parse_authc(line: str) -> Optional[dict]:
             device=device,
             action="logout",
             result="OK",
-            raw=line.strip(),
+            raw=msg,
         )
 
     return None
@@ -266,7 +266,7 @@ def _parse_acct(line: str) -> Optional[dict]:
         device=device,
         action=f"acct_{op}",
         result="OK",
-        raw=line.strip(),
+        raw=msg,
         command=cmd if service == "shell" else "",
     )
 
@@ -297,7 +297,7 @@ def _parse_authz(line: str) -> Optional[dict]:
         device=device,
         action="authz",
         result=result,
-        raw=line.strip(),
+        raw=msg,
     )
 
 
