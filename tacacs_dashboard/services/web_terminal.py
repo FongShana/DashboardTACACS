@@ -5,7 +5,8 @@ import re
 import time
 import uuid
 import threading
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Tuple
+from pathlib import Path
 
 import pexpect
 
@@ -15,21 +16,41 @@ from .policy_store import load_policy
 PROMPT_RE = re.compile(r"[>#]\s*$", re.M)
 PASS_RE = re.compile(r"(?i)password:")
 LOGIN_RE = re.compile(r"(?i)(username:|login:)")
-DENIED_RE = re.compile(r"(?i)(denied|failed|not authorized|invalid|incorrect|authentication failed|login incorrect)")
+DENIED_RE = re.compile(
+    r"(?i)(denied|failed|not authorized|invalid|incorrect|authentication failed|login incorrect)"
+)
 MORE_RE = re.compile(r"--More--")
 
-# In-memory sessions (⚠️ works reliably only with a single gunicorn worker, or sticky sessions)
+# In-memory sessions (works reliably with single gunicorn worker, or sticky sessions)
 _SESSIONS: Dict[str, Dict[str, Any]] = {}
 _LOCK = threading.RLock()
 
 # Session idle timeout (seconds)
 IDLE_TTL = 15 * 60  # 15 minutes
 
+# Project base dir (policy.json, secret.env อยู่ตรงนี้)
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+SECRET_ENV_PATH = BASE_DIR / "secret.env"
+
+
+def _read_env(key: str, default: str = "") -> str:
+    if not SECRET_ENV_PATH.exists():
+        return default
+    for line in SECRET_ENV_PATH.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith(key + "="):
+            return line.split("=", 1)[1].strip()
+    return default
+
+
 def _cap(child: pexpect.spawn) -> str:
-    """Capture child.before/after safely (after can be pexpect.TIMEOUT/EOF types)."""
+    """Capture child.before/after safely (after can be TIMEOUT/EOF objects)."""
     before = child.before or ""
     after = child.after if isinstance(child.after, str) else ""
     return before + after
+
 
 def _cleanup_expired() -> None:
     now = time.time()
@@ -86,7 +107,6 @@ def _enable_level_for_role(role: str) -> int:
 
 
 def _read_nonblocking(child: pexpect.spawn, budget_s: float = 0.25, chunk_size: int = 4096) -> str:
-    """Read output for a short time window without blocking."""
     end = time.time() + budget_s
     out = []
     while time.time() < end:
@@ -94,7 +114,6 @@ def _read_nonblocking(child: pexpect.spawn, budget_s: float = 0.25, chunk_size: 
             data = child.read_nonblocking(size=chunk_size, timeout=0.05)
             if data:
                 out.append(data)
-                # Auto-handle --More--
                 if "--More--" in data:
                     child.send(" ")
                     continue
@@ -107,16 +126,69 @@ def _read_nonblocking(child: pexpect.spawn, budget_s: float = 0.25, chunk_size: 
     return "".join(out)
 
 
+def _enable_with_fallbacks(
+    child: pexpect.spawn,
+    *,
+    username: str,
+    login_password: str,
+    level: int,
+    timeout: int,
+) -> str:
+    """
+    Try enable with:
+      1) login password
+      2) enable password from secret.env (TACACS_ENABLE_PASSWORD / OLT_ENABLE15_PASSWORD)
+      3) augmented format: "username password"  (for $enab..$ style clients) 
+    Returns captured output.
+    """
+    out = ""
+
+    child.sendline(f"enable {level}")
+    idx = child.expect([PASS_RE, PROMPT_RE, DENIED_RE, pexpect.TIMEOUT], timeout=timeout)
+    out += _cap(child)
+
+    if idx == 1:
+        return out  # no password asked, already at prompt
+    if idx == 2:
+        raise RuntimeError("Enable denied\n" + out)
+    if idx == 3:
+        raise RuntimeError("Enable timeout\n" + out)
+
+    # idx == 0 -> password prompt
+    enable_pw = _read_env("TACACS_ENABLE_PASSWORD", "") or _read_env("OLT_ENABLE15_PASSWORD", "")
+    candidates = [login_password]
+    if enable_pw and enable_pw not in candidates:
+        candidates.append(enable_pw)
+    augmented = f"{username} {login_password}"
+    if augmented not in candidates:
+        candidates.append(augmented)
+
+    for cand in candidates:
+        child.sendline(cand)
+        idx2 = child.expect([PROMPT_RE, PASS_RE, DENIED_RE, pexpect.TIMEOUT], timeout=timeout)
+        out += _cap(child)
+
+        if idx2 == 0:
+            return out
+        if idx2 == 1:
+            # asked password again -> try next candidate
+            continue
+        if idx2 == 2:
+            raise RuntimeError("Enable denied\n" + out)
+
+    raise RuntimeError("Enable failed (wrong password/timeout)\n" + out)
+
+
 def create_session(
     device: str,
     username: str,
     password: str,
     *,
     timeout: int = 10,
-) -> Tuple[str, str, str, int]:
+) -> Tuple[str, str, str, int, str]:
     """
     Create interactive telnet session and auto-enable according to user's role.
-    Returns: (session_id, role, device_ip, enable_level)
+    Returns: (session_id, role, device_ip, enable_level, output)
     """
     _cleanup_expired()
 
@@ -131,63 +203,55 @@ def create_session(
     child = pexpect.spawn("/usr/bin/telnet", [device_ip], encoding="utf-8", timeout=timeout)
     child.delaybeforesend = 0.05
 
-    # Login
-    child.expect([LOGIN_RE, pexpect.TIMEOUT])
-    child.sendline(username)
+    output = ""
 
-    child.expect([PASS_RE, pexpect.TIMEOUT])
-    child.sendline(password)
-
-    # Wait for prompt or denied
-    # Login
-    idx = child.expect([LOGIN_RE, pexpect.TIMEOUT], timeout=timeout)
-    output = _cap(child)
-    if idx == 1:
+    # Wait Username
+    idx = child.expect([LOGIN_RE, DENIED_RE, pexpect.TIMEOUT, pexpect.EOF], timeout=timeout * 2)
+    output += _cap(child)
+    if idx != 0:
         child.close(force=True)
-        raise RuntimeError("Timeout waiting for Username prompt")
+        raise RuntimeError("Timeout/EOF waiting for Username prompt\n" + output)
 
     child.sendline(username)
 
-    idx = child.expect([PASS_RE, pexpect.TIMEOUT], timeout=timeout)
+    # Wait Password
+    idx = child.expect([PASS_RE, DENIED_RE, LOGIN_RE, pexpect.TIMEOUT, pexpect.EOF], timeout=timeout * 2)
     output += _cap(child)
-    if idx == 1:
+    if idx != 0:
         child.close(force=True)
-        raise RuntimeError("Timeout waiting for Password prompt")
+        raise RuntimeError("Timeout/EOF waiting for Password prompt\n" + output)
 
     child.sendline(password)
 
-    idx = child.expect([PROMPT_RE, DENIED_RE, pexpect.TIMEOUT], timeout=timeout * 2)
+    # Wait prompt
+    idx = child.expect([PROMPT_RE, DENIED_RE, LOGIN_RE, PASS_RE, pexpect.TIMEOUT, pexpect.EOF], timeout=timeout * 3)
     output += _cap(child)
+
     if idx == 1:
         child.close(force=True)
-        raise RuntimeError("Login denied")
-    if idx == 2:
+        raise RuntimeError("Login denied\n" + output)
+    if idx in (2, 3):
         child.close(force=True)
-        raise RuntimeError("Timeout waiting for prompt after login")
-
+        raise RuntimeError("Login failed (got Username/Password again)\n" + output)
+    if idx in (4, 5):
+        child.close(force=True)
+        raise RuntimeError("Timeout/EOF waiting for prompt after login\n" + output)
 
     # Auto enable to role's level (if we're at '>')
     if (child.after or "").strip().endswith(">"):
-        child.sendline(f"enable {level}")
-        idx2 = child.expect([PASS_RE, PROMPT_RE, DENIED_RE, pexpect.TIMEOUT], timeout=timeout)
-        output += _cap(child)
-
-        if idx2 == 0:  # Password:
-            # enable <level> = login (send login password)
-            child.sendline(password)
-            idx3 = child.expect([PROMPT_RE, DENIED_RE, pexpect.TIMEOUT], timeout=timeout)
-            output += _cap(child)
-            if idx3 != 0:
-                child.close(force=True)
-                raise RuntimeError("Enable failed (wrong password/denied/timeout)")
-        elif idx2 == 2:
+        try:
+            output += _enable_with_fallbacks(
+                child,
+                username=username,
+                login_password=password,
+                level=level,
+                timeout=timeout,
+            )
+        except Exception as e:
             child.close(force=True)
-            raise RuntimeError("Enable denied")
-        elif idx2 == 3:
-            child.close(force=True)
-            raise RuntimeError("Enable timeout")
+            raise
 
-    # Read any remaining data quickly
+    # Grab any remaining output quickly
     output += _read_nonblocking(child, budget_s=0.2)
 
     sid = uuid.uuid4().hex
@@ -201,6 +265,7 @@ def create_session(
             "created": time.time(),
             "last_access": time.time(),
         }
+
     return sid, role, device_ip, level, output
 
 
@@ -217,11 +282,11 @@ def send_line(session_id: str, line: str, *, timeout: int = 10) -> str:
         s["last_access"] = time.time()
         child: pexpect.spawn = s["child"]
 
-    # Send line
-    # Allow raw control like \x03 etc. If user passes "\x03" string, convert.
     if line is None:
         line = ""
     line = str(line)
+
+    # allow raw control like "\x03"
     if line.startswith("\\x") and len(line) == 4:
         try:
             child.send(bytes([int(line[2:], 16)]).decode("latin1"))
@@ -230,13 +295,11 @@ def send_line(session_id: str, line: str, *, timeout: int = 10) -> str:
     else:
         child.sendline(line)
 
-    # Wait a bit for prompt or more output
     out = ""
     try:
         idx = child.expect([PROMPT_RE, MORE_RE, pexpect.TIMEOUT], timeout=0.5)
         out += _cap(child)
         if idx == 1:
-            # page more
             child.send(" ")
             out += _read_nonblocking(child, budget_s=0.4)
         else:
@@ -261,3 +324,4 @@ def _close_nolock(session_id: str) -> None:
 def close_session(session_id: str) -> None:
     with _LOCK:
         _close_nolock(session_id)
+

@@ -20,13 +20,12 @@ def build_provision_commands(username: str, role: str) -> list[str]:
         "conf t",
         "system-user",
         f"user-name {username}",
+        "enable-type aaa authentication-template 128",
         "bind authentication-template 128",
         f"bind authorization-template {author_t}",
+        "exit",
+        "end",
     ]
-    if role in ("OLT_ADMIN", "OLT_ENGINEER"):
-        cmds.append("enable-type aaa authentication-template 128")
-
-    cmds += ["exit", "end"]
     return cmds
 
 
