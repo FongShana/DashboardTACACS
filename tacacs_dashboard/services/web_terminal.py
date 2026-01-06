@@ -25,6 +25,11 @@ _LOCK = threading.RLock()
 # Session idle timeout (seconds)
 IDLE_TTL = 15 * 60  # 15 minutes
 
+def _cap(child: pexpect.spawn) -> str:
+    """Capture child.before/after safely (after can be pexpect.TIMEOUT/EOF types)."""
+    before = child.before or ""
+    after = child.after if isinstance(child.after, str) else ""
+    return before + after
 
 def _cleanup_expired() -> None:
     now = time.time()
@@ -134,26 +139,44 @@ def create_session(
     child.sendline(password)
 
     # Wait for prompt or denied
-    idx = child.expect([PROMPT_RE, DENIED_RE, pexpect.TIMEOUT], timeout=timeout)
-    output = (child.before or "") + (child.after or "")
-    if idx != 0:
-        try:
-            child.close(force=True)
-        except Exception:
-            pass
-        raise RuntimeError("Login failed/denied/timeout")
+    # Login
+    idx = child.expect([LOGIN_RE, pexpect.TIMEOUT], timeout=timeout)
+    output = _cap(child)
+    if idx == 1:
+        child.close(force=True)
+        raise RuntimeError("Timeout waiting for Username prompt")
+
+    child.sendline(username)
+
+    idx = child.expect([PASS_RE, pexpect.TIMEOUT], timeout=timeout)
+    output += _cap(child)
+    if idx == 1:
+        child.close(force=True)
+        raise RuntimeError("Timeout waiting for Password prompt")
+
+    child.sendline(password)
+
+    idx = child.expect([PROMPT_RE, DENIED_RE, pexpect.TIMEOUT], timeout=timeout * 2)
+    output += _cap(child)
+    if idx == 1:
+        child.close(force=True)
+        raise RuntimeError("Login denied")
+    if idx == 2:
+        child.close(force=True)
+        raise RuntimeError("Timeout waiting for prompt after login")
+
 
     # Auto enable to role's level (if we're at '>')
     if (child.after or "").strip().endswith(">"):
         child.sendline(f"enable {level}")
         idx2 = child.expect([PASS_RE, PROMPT_RE, DENIED_RE, pexpect.TIMEOUT], timeout=timeout)
-        output += (child.before or "") + (child.after or "")
+        output += _cap(child)
 
         if idx2 == 0:  # Password:
             # enable <level> = login (send login password)
             child.sendline(password)
             idx3 = child.expect([PROMPT_RE, DENIED_RE, pexpect.TIMEOUT], timeout=timeout)
-            output += (child.before or "") + (child.after or "")
+            output += _cap(child)
             if idx3 != 0:
                 child.close(force=True)
                 raise RuntimeError("Enable failed (wrong password/denied/timeout)")
@@ -211,7 +234,7 @@ def send_line(session_id: str, line: str, *, timeout: int = 10) -> str:
     out = ""
     try:
         idx = child.expect([PROMPT_RE, MORE_RE, pexpect.TIMEOUT], timeout=0.5)
-        out += (child.before or "") + (child.after or "")
+        out += _cap(child)
         if idx == 1:
             # page more
             child.send(" ")
