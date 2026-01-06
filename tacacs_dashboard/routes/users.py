@@ -226,6 +226,10 @@ def create_user_form():
         flash("กรุณากรอก Username และ Role ให้ครบ", "error")
         return redirect(url_for("users.index"))
 
+    if not re.match(r"^[A-Za-z0-9][A-Za-z0-9_-]{2,31}$", username):
+        flash("Username ต้องยาว 3–32 ตัว และใช้ได้เฉพาะ A-Z a-z 0-9 _ -", "error")
+        return redirect(url_for("users.index"))
+
     policy = load_policy()
     users = policy.get("users", [])
     roles = policy.get("roles", [])
