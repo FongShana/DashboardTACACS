@@ -123,7 +123,7 @@ def create_session(
     role = _role_for_user(username)
     level = _enable_level_for_role(role)
 
-    child = pexpect.spawn("telnet", [device_ip], encoding="utf-8", timeout=timeout)
+    child = pexpect.spawn("/usr/bin/telnet", [device_ip], encoding="utf-8", timeout=timeout)
     child.delaybeforesend = 0.05
 
     # Login
