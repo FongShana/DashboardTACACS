@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+
+{% block title %}Web Terminal | NT TACACS+{% endblock %}
+{% block header %}Web Terminal{% endblock %}
+
+{% block content %}
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="flash-container">
+    {% for category, message in messages %}
+      <div class="flash flash-{{ category }}">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+
+<section class="section">
+  <h2 class="section-title">Connect</h2>
+
+  <div class="form-card">
+    <div class="form-grid">
+      <div class="form-row">
+        <label for="device">Device</label>
+        <select id="device" class="input">
+          {% for d in devices %}
+            <option value="{{ d.name }}">{{ d.name }} ({{ d.ip }})</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="form-row">
+        <label for="username">Username</label>
+        <input id="username" class="input" type="text" placeholder="เช่น tech01">
+      </div>
+
+      <div class="form-row">
+        <label for="password">Password</label>
+        <input id="password" class="input" type="password" placeholder="รหัส TACACS ของ user">
+      </div>
+    </div>
+
+    <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+      <button id="btnConnect" class="btn btn-primary" type="button">Connect</button>
+      <button id="btnClose" class="btn btn-danger" type="button" disabled>Close</button>
+      <span id="status" style="color:#6b7280;"></span>
+    </div>
+
+    <div style="margin-top:0.75rem; color:#374151; font-size:0.9rem;">
+      ระบบจะ <b>auto enable ตาม role</b> จาก <code>policy.json</code> (privilege 1/7/15)
+      <br>
+      Tip: ส่ง Ctrl+C พิมพ์ <code>\x03</code>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <h2 class="section-title">Terminal</h2>
+
+  <div class="card">
+    <pre id="output" style="height: 460px; overflow:auto; background:#0b1220; color:#e5e7eb; padding:12px; border-radius:10px; white-space:pre-wrap; border:1px solid #1f2937;"></pre>
+
+    <div style="display:flex; gap:0.5rem; margin-top:0.75rem; align-items:center;">
+      <input id="cmd" class="input" type="text" placeholder="พิมพ์คำสั่งแล้วกด Enter (เช่น show privilege)" disabled style="flex:1;">
+      <button id="btnSend" class="btn btn-success" type="button" disabled>Send</button>
+    </div>
+  </div>
+</section>
+
+<script>
+let sessionId = null;
+
+function appendOut(text){
+  const out = document.getElementById("output");
+  out.textContent += text;
+  out.scrollTop = out.scrollHeight;
+}
+
+function setStatus(s){ document.getElementById("status").textContent = s; }
+
+async function connect(){
+  const device = document.getElementById("device").value;
+  const username = document.getElementById("username").value;
+  const password = document.getElementById("password").value;
+
+  setStatus("connecting...");
+  const resp = await fetch("/terminal/connect", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({device, username, password})
+  });
+  const data = await resp.json();
+  if(!data.ok){
+    setStatus("connect failed");
+    appendOut("\\n[ERROR] " + data.error + "\\n");
+    return;
+  }
+  sessionId = data.session_id;
+  document.getElementById("btnClose").disabled = false;
+  document.getElementById("cmd").disabled = false;
+  document.getElementById("btnSend").disabled = false;
+  document.getElementById("btnConnect").disabled = true;
+  document.getElementById("password").value = ""; // don't keep
+  setStatus(`connected: ${data.device_ip} | role=${data.role} | enable=${data.enable_level}`);
+  appendOut(data.output || "");
+}
+
+async function sendLine(){
+  const cmdEl = document.getElementById("cmd");
+  const line = cmdEl.value;
+  if(!sessionId) return;
+  cmdEl.value = "";
+
+  const resp = await fetch("/terminal/send", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({session_id: sessionId, line})
+  });
+  const data = await resp.json();
+  if(!data.ok){
+    appendOut("\\n[ERROR] " + data.error + "\\n");
+    setStatus("error");
+    return;
+  }
+  appendOut((data.output || ""));
+}
+
+async function closeSession(){
+  if(!sessionId) return;
+  await fetch("/terminal/close", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({session_id: sessionId}),
+    keepalive: true
+  });
+  sessionId = null;
+  document.getElementById("btnClose").disabled = true;
+  document.getElementById("cmd").disabled = true;
+  document.getElementById("btnSend").disabled = true;
+  document.getElementById("btnConnect").disabled = false;
+  setStatus("closed");
+  appendOut("\\n[closed]\\n");
+}
+
+document.getElementById("btnConnect").addEventListener("click", connect);
+document.getElementById("btnSend").addEventListener("click", sendLine);
+document.getElementById("btnClose").addEventListener("click", closeSession);
+document.getElementById("cmd").addEventListener("keydown", (e) => {
+  if(e.key === "Enter"){
+    e.preventDefault();
+    sendLine();
+  }
+});
+
+window.addEventListener("beforeunload", () => {
+  if(sessionId){
+    // best effort close
+    fetch("/terminal/close", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({session_id: sessionId}),
+      keepalive: true
+    });
+  }
+});
+</script>
+
+{% endblock %}

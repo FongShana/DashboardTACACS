@@ -5,6 +5,7 @@ from .routes.devices import bp as devices_bp
 from .routes.logs import bp as logs_bp
 from .routes.settings import bp as settings_bp
 from .routes.api import bp as api_bp
+from .routes.terminal import bp as terminal_bp
 
 def create_app():
     app = Flask(__name__)
@@ -19,6 +20,9 @@ def create_app():
 
     # register blueprint of REST API
     app.register_blueprint(api_bp, url_prefix="/api")
+
+    # web terminal
+    app.register_blueprint(terminal_bp)
 
     @app.route("/health")
     def health():
