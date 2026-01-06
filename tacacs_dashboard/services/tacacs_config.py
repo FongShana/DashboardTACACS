@@ -71,6 +71,7 @@ def _user_profile_lines(role_name: str, priv: int) -> list[str]:
 
     lines: list[str] = []
     lines.append("  profile {")
+    lines.append(f"    enable {p} = login")
     lines.append("    script {")
     lines.append("      if (service == shell) {")
     lines.append('        if (cmd == "") {')
@@ -86,7 +87,11 @@ def _user_profile_lines(role_name: str, priv: int) -> list[str]:
 
     elif role == "OLT_ENGINEER":
         # (optional) กันคำสั่งอันตรายจาก TACACS อีกชั้น
-        lines.append(r"        if (cmd =~ /^(reload|power)(\s|$)/) deny")
+        lines.append(r"        if (cmd =~ /^reload(\s|$)/) deny")
+        lines.append(r"        if (cmd =~ /^reload-/) deny")
+        lines.append(r"        if (cmd =~ /^power(\s|$)/) deny")
+        lines.append(r"        if (cmd =~ /^power-/) deny")
+        lines.append(r"        if (cmd =~ /^ping(\s|$)/) deny")
         lines.append("        permit")
 
     else:
