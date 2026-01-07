@@ -292,12 +292,54 @@ def send_line(session_id: str, line: str, *, timeout: int = 10) -> str:
             child.send(bytes([int(line[2:], 16)]).decode("latin1"))
         except Exception:
             child.send(line)
-    else:
-        child.sendline(line)
+        return _read_nonblocking(child, budget_s=0.35)
+
+    # ---- HELP MODE (?) ----
+    is_help = line.rstrip().endswith("?")
 
     out = ""
+
+    if is_help:
+        # 1) ส่งแบบไม่กด Enter (ให้มันทำ inline help)
+        child.send(line)
+
+        # 2) อ่าน output help
+        out += _read_nonblocking(child, budget_s=0.55)
+
+        # 3) ล้างบรรทัดที่ค้างไว้ (เช่น "pon ")
+        # Ctrl+U = clear line (ส่วนใหญ่ CLI network รองรับ)
+        child.send("\x15")
+        # redraw prompt ด้วย Enter เปล่า
+        child.send("\r")
+
+        # 4) รอ prompt กลับมา (ถ้าไม่มาก็ fallback ด้วย Ctrl+C)
+        try:
+            child.expect([PROMPT_RE, pexpect.TIMEOUT], timeout=0.8)
+            out += _cap(child)
+        except Exception:
+            pass
+
+        if not PROMPT_RE.search(out):
+            # fallback: Ctrl+C แล้ว Enter
+            child.send("\x03")
+            child.send("\r")
+            try:
+                child.expect([PROMPT_RE, pexpect.TIMEOUT], timeout=0.8)
+                out += _cap(child)
+            except Exception:
+                pass
+
+        out += _read_nonblocking(child, budget_s=0.25)
+        return out
+
+    # ---- NORMAL COMMAND ----
+    child.sendline(line)
+
+    # อ่าน output แบบสั้น ๆ + page more
+    out += _read_nonblocking(child, budget_s=0.35)
+
     try:
-        idx = child.expect([PROMPT_RE, MORE_RE, pexpect.TIMEOUT], timeout=0.5)
+        idx = child.expect([PROMPT_RE, MORE_RE, pexpect.TIMEOUT], timeout=0.6)
         out += _cap(child)
         if idx == 1:
             child.send(" ")
@@ -306,7 +348,9 @@ def send_line(session_id: str, line: str, *, timeout: int = 10) -> str:
             out += _read_nonblocking(child, budget_s=0.2)
     except Exception:
         out += _read_nonblocking(child, budget_s=0.2)
+
     return out
+
 
 
 def _close_nolock(session_id: str) -> None:
