@@ -21,6 +21,8 @@ DENIED_RE = re.compile(
 )
 MORE_RE = re.compile(r"--More--")
 
+ANSI_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
+
 # In-memory sessions (works reliably with single gunicorn worker, or sticky sessions)
 _SESSIONS: Dict[str, Dict[str, Any]] = {}
 _LOCK = threading.RLock()
@@ -105,6 +107,8 @@ def _enable_level_for_role(role: str) -> int:
         return 7
     return 15
 
+def _strip_ansi(s: str) -> str:
+    return ANSI_RE.sub("", s or "")
 
 def _read_nonblocking(child: pexpect.spawn, budget_s: float = 0.25, chunk_size: int = 4096) -> str:
     end = time.time() + budget_s
@@ -330,7 +334,7 @@ def send_line(session_id: str, line: str, *, timeout: int = 10) -> str:
                 pass
 
         out += _read_nonblocking(child, budget_s=0.25)
-        return out
+        return _strip_ansi(out)
 
     # ---- NORMAL COMMAND ----
     child.sendline(line)
@@ -349,7 +353,7 @@ def send_line(session_id: str, line: str, *, timeout: int = 10) -> str:
     except Exception:
         out += _read_nonblocking(child, budget_s=0.2)
 
-    return out
+    return _strip_ansi(out)
 
 
 
