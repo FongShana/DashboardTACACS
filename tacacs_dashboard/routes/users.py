@@ -6,6 +6,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash
 
 import re
 from tacacs_dashboard.services.log_parser import get_last_login_map
+from tacacs_dashboard.services.privilege import parse_privilege
 
 from tacacs_dashboard.services.policy_store import (
     load_policy,
@@ -370,10 +371,19 @@ def edit_role_submit(name):
         return redirect(url_for("users.index"))
 
     target["description"] = (request.form.get("description") or "").strip()
-    target["privilege"] = (request.form.get("privilege") or "").strip()
+
+    # privilege validation: must be 1..15
+    priv_raw = (request.form.get("privilege") or "").strip()
+    if not re.search(r"\d+", priv_raw):
+        flash("Privilege ต้องเป็นตัวเลข 1-15", "error")
+        return redirect(url_for("users.edit_role_form", name=name))
+
+    priv = parse_privilege(priv_raw, default=15)
+    target["privilege"] = str(priv)
 
     save_policy(policy)
     flash(f"อัปเดต Role {name} เรียบร้อยแล้ว", "success")
     _run_generate_check_restart_and_flash()
     return redirect(url_for("users.index"))
+
 

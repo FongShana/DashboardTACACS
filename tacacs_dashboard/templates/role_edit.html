@@ -26,8 +26,9 @@
       </div>
 
       <div class="form-row">
-        <label for="privilege">Privilege</label>
-        <input class="input" id="privilege" type="text" name="privilege"
+        <label for="privilege">Privilege (1–15)</label>
+        <input class="input" id="privilege" type="number" name="privilege"
+               min="1" max="15" step="1"
                value="{{ role.privilege or '' }}"
                placeholder="เช่น 1 (read-only), 15 (full)">
       </div>
@@ -48,3 +49,4 @@
 </section>
 
 {% endblock %}
+

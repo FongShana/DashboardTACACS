@@ -6,6 +6,7 @@ import re
 
 from .policy_store import load_policy
 from .user_secrets_store import get_user_password, ensure_user_has_password
+from .privilege import parse_privilege
 
 # โฟลเดอร์ฐานของโปรเจกต์ (ที่มี policy.json, secret.env, pass.secret)
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -52,12 +53,8 @@ def _parse_privilege(value) -> int:
     """
     role.privilege ใน policy อาจเป็น '15 / full' หรือ '7' หรือ 7
     """
-    if value is None:
-        return 1
-    m = re.search(r"\d+", str(value))
-    n = int(m.group(0)) if m else 1
-    # กันไม่ให้กลายเป็น 0 แบบที่เคยเจอ
-    return max(1, min(15, n))
+    # ✅ normalize + clamp 1..15
+    return parse_privilege(value, default=1)
 
 
 def _user_profile_lines(role_name: str, priv: int) -> list[str]:
@@ -228,4 +225,5 @@ def build_config_text() -> str:
     lines.append("}")
 
     return "\n".join(lines)
+
 

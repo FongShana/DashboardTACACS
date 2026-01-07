@@ -11,6 +11,7 @@ from pathlib import Path
 import pexpect
 
 from .policy_store import load_policy
+from .privilege import parse_privilege
 
 # ZTE prompt: '>' (user exec) / '#' (privileged exec)
 PROMPT_RE = re.compile(r"[>#]\s*$", re.M)
@@ -96,10 +97,7 @@ def _enable_level_for_role(role: str) -> int:
     policy = load_policy()
     for r in policy.get("roles", []):
         if (r.get("name") or "").strip().upper() == role:
-            try:
-                return int(str(r.get("privilege", "15")).strip())
-            except Exception:
-                return 15
+            return parse_privilege(r.get("privilege"), default=15)
     # fallback
     if role == "OLT_VIEW":
         return 1
@@ -372,4 +370,5 @@ def _close_nolock(session_id: str) -> None:
 def close_session(session_id: str) -> None:
     with _LOCK:
         _close_nolock(session_id)
+
 

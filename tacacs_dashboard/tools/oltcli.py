@@ -6,6 +6,8 @@ import re
 import getpass
 import pexpect
 
+from tacacs_dashboard.services.privilege import parse_privilege
+
 PROMPT_RE = re.compile(r"[>#]\s*$", re.M)
 PASS_RE = re.compile(r"(?i)password:")
 LOGIN_RE = re.compile(r"(?i)(username:|login:)")
@@ -31,10 +33,7 @@ def enable_level_for_role(policy: dict, role: str) -> int:
     # ใช้ privilege ใน policy roles ก่อน ถ้าไม่มีค่อย fallback mapping
     for r in policy.get("roles", []):
         if r.get("name", "").upper() == role.upper():
-            try:
-                return int(r.get("privilege", "15"))
-            except Exception:
-                break
+            return parse_privilege(r.get("privilege"), default=15)
     return int(ROLE_TO_ENABLE.get(role.upper(), 15))
 
 
@@ -135,4 +134,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
