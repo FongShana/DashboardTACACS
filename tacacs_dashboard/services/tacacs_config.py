@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 
 from .policy_store import load_policy
+from .user_secrets_store import get_user_password, ensure_user_has_password
 
 # โฟลเดอร์ฐานของโปรเจกต์ (ที่มี policy.json, secret.env, pass.secret)
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -143,7 +144,12 @@ def build_pass_secret_text() -> str:
         role = str(role).strip() or "OLT_VIEW"
 
         priv = role_priv.get(role, 1)
-        pw = u.get("password") or default_pw
+
+        # ✅ ensure มี entry ใน user_secrets.json (ถ้ายังไม่มีก็ใส่ default ให้)
+        ensure_user_has_password(username)
+
+        # ✅ password ของ user (ถ้าไม่มีราย user จะ fallback ไป default_password)
+        pw = get_user_password(username)
 
         lines.append(f"user {username} {{")
         lines.append(f'  password login = clear "{_escape(pw)}"')

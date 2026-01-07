@@ -16,3 +16,5 @@ pass.secret
 
 # Logs
 *.log
+
+user_secrets.json
