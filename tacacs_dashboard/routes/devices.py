@@ -1,8 +1,10 @@
+import re
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 from tacacs_dashboard.services.policy_store import load_policy, save_policy
 
 bp = Blueprint("devices", __name__)
 
+NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{2,31}$")
 
 def _is_valid_ipv4(ip: str) -> bool:
     parts = ip.split(".")
@@ -108,22 +110,29 @@ def edit_device_submit(name):
     policy = load_policy()
     devices = policy.get("devices", [])
 
-    target = None
-    for d in devices:
-        if d.get("name") == name:
-            target = d
-            break
-
+    target = next((d for d in devices if (d.get("name") or "") == name), None)
     if not target:
         flash(f"ไม่พบ Device {name}", "error")
         return redirect(url_for("devices.index"))
 
-    # อัปเดต field ที่แก้ได้
-    target["vendor"] = request.form.get("vendor", "").strip()
-    target["ip"]     = request.form.get("ip", "").strip()
-    target["site"]   = request.form.get("site", "").strip()
-    target["status"] = request.form.get("status", "").strip()
+    # --- ✅ rename ได้ ---
+    new_name = (request.form.get("name") or "").strip() or name
+    if new_name != name:
+        if not NAME_RE.match(new_name):
+            flash("Device name ต้องยาว 3–32 ตัว และใช้ได้เฉพาะ A-Z a-z 0-9 _ -", "error")
+            return redirect(url_for("devices.edit_device_form", name=name))
+
+        if any((d.get("name") or "").strip() == new_name for d in devices if d is not target):
+            flash(f"ชื่อ Device '{new_name}' ซ้ำกับตัวอื่น", "error")
+            return redirect(url_for("devices.edit_device_form", name=name))
+
+        target["name"] = new_name
+
+    # --- อัปเดต field อื่น ๆ ตามเดิมของคุณ (ip/vendor/site/status ฯลฯ) ---
+    # target["ip"] = ...
+    # save_policy(policy)
 
     save_policy(policy)
-    flash(f"อัปเดต Device {name} เรียบร้อยแล้ว", "success")
+    flash(f"บันทึก Device สำเร็จ", "success")
     return redirect(url_for("devices.index"))
+

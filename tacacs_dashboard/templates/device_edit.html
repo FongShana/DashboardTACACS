@@ -21,8 +21,9 @@
   <form method="post" class="form-card">
     <div class="form-grid">
       <div class="form-row">
-        <label>Name (แก้ไม่ได้)</label>
-        <input class="input" type="text" value="{{ device.name }}" disabled>
+        <label for="name">Name</label>
+        <input class="input" id="name" type="text" name="name" value="{{ device.name }}" required>
+        <small style="color:#666;">แก้ชื่อในเว็บ/policy.json เท่านั้น (ไม่ไปแก้ชื่อที่ OLT)</small>
       </div>
 
       <div class="form-row">
@@ -45,8 +46,8 @@
 
       <div class="form-row">
         <label for="status">Status</label>
+        {% set st = device.status or "Unknown" %}
         <select class="input" id="status" name="status">
-          {% set st = device.status or "Unknown" %}
           <option value="Online"  {% if st == "Online" %}selected{% endif %}>Online</option>
           <option value="Offline" {% if st == "Offline" %}selected{% endif %}>Offline</option>
           <option value="Unknown" {% if st == "Unknown" %}selected{% endif %}>Unknown</option>
@@ -62,3 +63,4 @@
 </section>
 
 {% endblock %}
+
