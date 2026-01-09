@@ -76,26 +76,6 @@ def _user_profile_lines(role_name: str, priv: int) -> list[str]:
     lines.append(f"          set priv-lvl = {p}")
     lines.append("          permit")
     lines.append("        }")
-
-    if role == "OLT_VIEW":
-        # อนุญาต show ... และ exit/logout/quit เท่านั้น
-        lines.append(r"        if (cmd =~ /^show(\s|$)/) permit")
-        lines.append(r"        if (cmd =~ /^(exit|logout|quit)(\s|$)/) permit")
-        lines.append("        deny")
-
-    elif role == "OLT_ENGINEER":
-        # (optional) กันคำสั่งอันตรายจาก TACACS อีกชั้น
-        lines.append(r"        if (cmd =~ /^reload(\s|$)/) deny")
-        lines.append(r"        if (cmd =~ /^reload-/) deny")
-        lines.append(r"        if (cmd =~ /^power(\s|$)/) deny")
-        lines.append(r"        if (cmd =~ /^power-/) deny")
-        lines.append(r"        if (cmd =~ /^ping(\s|$)/) deny")
-        lines.append("        permit")
-
-    else:
-        # OLT_ADMIN หรือ role อื่น ๆ
-        lines.append("        permit")
-
     lines.append("      }")
     lines.append("      permit")
     lines.append("    }")
