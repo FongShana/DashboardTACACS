@@ -1,6 +1,9 @@
 import re
 from flask import Blueprint, render_template, request, redirect, url_for, flash
+
 from tacacs_dashboard.services.policy_store import load_policy, save_policy
+from tacacs_dashboard.services.tacacs_config import _read_env
+from tacacs_dashboard.services.olt_bootstrap import bootstrap_device_on_olt
 
 bp = Blueprint("devices", __name__)
 
@@ -35,6 +38,7 @@ def create_device_form():
     vendor = request.form.get("vendor", "")
     site = request.form.get("site", "")
     status = request.form.get("status", "Unknown")
+    bootstrap = (request.form.get("bootstrap") or "").strip().lower() in ("1", "true", "yes", "on")
 
     if not name or not ip:
         flash("กรุณากรอก Name และ IP ให้ครบ", "error")
@@ -62,6 +66,21 @@ def create_device_form():
     save_policy(policy)
 
     flash(f"เพิ่มอุปกรณ์ {name} เรียบร้อย", "success")
+
+    # Optional: bootstrap AAA templates + system-user binds on the OLT
+    if bootstrap:
+        auto_write = (_read_env("OLT_AUTO_WRITE", "0") or "0").strip().lower()
+        save = auto_write in ("1", "true", "yes")
+        try:
+            out = bootstrap_device_on_olt(ip, save=save, dry_run=False)
+            msg = out if len(out) <= 400 else out[:400] + " ... (truncated)"
+            flash(
+                f"Bootstrap AAA บน OLT {ip} สำเร็จ (save={'ON' if save else 'OFF'}): {msg}",
+                "success",
+            )
+        except Exception as e:
+            flash(f"Bootstrap AAA บน OLT {ip} ล้มเหลว: {e}", "error")
+
     return redirect(url_for("devices.index"))
 
 
@@ -135,4 +154,5 @@ def edit_device_submit(name):
     save_policy(policy)
     flash(f"บันทึก Device สำเร็จ", "success")
     return redirect(url_for("devices.index"))
+
 
