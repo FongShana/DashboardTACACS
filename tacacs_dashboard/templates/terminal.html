@@ -47,7 +47,7 @@
     </div>
 
     <div style="margin-top:0.75rem; color:#374151; font-size:0.9rem;">
-      ระบบจะ <b>auto enable ตาม role</b> จาก <code>policy.json</code> (privilege 1/7/15)
+      ระบบจะ <b>กำหนด privilege ตาม role</b> จาก <code>policy.json</code> (privilege 1/7/15) โดยไม่ต้องพิมพ์ <code>enable</code>
       <br>
     </div>
   </div>
@@ -100,7 +100,7 @@ async function connect(){
   document.getElementById("btnSend").disabled = false;
   document.getElementById("btnConnect").disabled = true;
   document.getElementById("password").value = ""; // don't keep
-  setStatus(`connected: ${data.device_ip} | role=${data.role} | enable=${data.enable_level}`);
+  setStatus(`connected: ${data.device_ip} | role=${data.role}`);
   appendOut(data.output || "");
 }
 
@@ -165,3 +165,4 @@ window.addEventListener("beforeunload", () => {
 </script>
 
 {% endblock %}
+
