@@ -69,7 +69,6 @@ def _user_profile_lines(role_name: str, priv: int) -> list[str]:
 
     lines: list[str] = []
     lines.append("  profile {")
-    lines.append(f"    enable {p} = login")
     lines.append("    script {")
     lines.append("      if (service == exec) {")
     lines.append(f"       set priv-lvl = {p}")
