@@ -4,25 +4,14 @@ from __future__ import annotations
 from .tacacs_config import _read_env
 from .olt_telnet import telnet_exec_commands
 
-
-def role_to_author_template(role: str) -> int:
-    role = (role or "").strip().upper()
-    if role == "OLT_ADMIN":
-        return 128
-    if role == "OLT_ENGINEER":
-        return 127
-    return 126
-
-
 def build_provision_commands(username: str, role: str) -> list[str]:
-    author_t = role_to_author_template(role)
     cmds: list[str] = [
         "conf t",
         "system-user",
         f"user-name {username}",
         "enable-type aaa authentication-template 128",
         "bind authentication-template 128",
-        f"bind authorization-template {author_t}",
+        "bind authorization-template 128",
         "exit",
         "end",
     ]
