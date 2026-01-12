@@ -427,3 +427,32 @@ code {
 .small {
   font-size: 0.8rem;
 }
+
+/* ---------------------------
+   Web Terminal (Connect card)
+   --------------------------- */
+.connect-card {
+  width: min(980px, 100%);
+}
+
+.terminal-form-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+@media (max-width: 720px) {
+  .terminal-form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.terminal-form-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.terminal-status {
+  flex: 1 1 320px;
+  min-height: 1.25rem;
+}
