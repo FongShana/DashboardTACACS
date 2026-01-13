@@ -101,6 +101,22 @@ def _get_olt_ip_list(policy: dict) -> list[str]:
     return uniq
 
 
+def _olt_job_summary(out: str, ip: str) -> str:
+    """เอาแค่บรรทัดสรุป job (กัน flash ยาว)"""
+    if not out:
+        return f"=== OLT TELNET JOB: {ip} ==="
+
+    for line in str(out).splitlines():
+        if "=== OLT TELNET JOB" in line:
+            return line.strip()
+
+    for line in str(out).splitlines():
+        if line.strip():
+            return line.strip()
+
+    return f"=== OLT TELNET JOB: {ip} ==="
+
+
 def _maybe_provision_to_olts(username: str, role: str, status: str) -> None:
     # provision เฉพาะ Active
     if (status or "").strip().lower() not in ("active", "enable", "enabled"):
@@ -131,11 +147,12 @@ def _maybe_provision_to_olts(username: str, role: str, status: str) -> None:
                 save=save,
                 dry_run=False,
             )
-            msg = out if len(out) <= 400 else out[:400] + " ... (truncated)"
+            msg = _olt_job_summary(out, ip)
             flash(
                 f"Provision '{username}' -> OLT {ip} สำเร็จ (save={'ON' if save else 'OFF'}): {msg}",
                 "success",
             )
+
         except Exception as e:
             flash(f"Provision '{username}' -> OLT {ip} ล้มเหลว: {e}", "error")
 
@@ -165,11 +182,12 @@ def _maybe_deprovision_from_olts(username: str) -> None:
                 save=save,
                 dry_run=False,
             )
-            msg = out if len(out) <= 400 else out[:400] + " ... (truncated)"
+            msg = _olt_job_summary(out, ip)
             flash(
                 f"Deprovision '{username}' -> OLT {ip} สำเร็จ (save={'ON' if save else 'OFF'}): {msg}",
                 "success",
             )
+
         except Exception as e:
             flash(f"Deprovision '{username}' -> OLT {ip} ล้มเหลว: {e}", "error")
 
