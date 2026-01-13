@@ -1,45 +1,97 @@
 # tacacs_dashboard/services/olt_telnet.py
 from __future__ import annotations
 
+"""Reusable Telnet command runner for ZTE OLT (and similar CLIs).
+
+Used by:
+- olt_bootstrap.py (bootstrap AAA templates / binds)
+- olt_provision.py (provision / deprovision users)
+
+Key behaviors:
+- Robust login flow (Username/login: or Password: directly)
+- Send commands line-by-line and wait for prompt after each command
+- Auto-handle "--More--" pagination
+- Detect denied/auth failures/timeouts early and raise meaningful errors
+- Return output in a readable "per-command" format (good for flashing in UI)
+
+NOTE: Web Terminal has its own in-memory session implementation.
+This module is for one-shot "connect -> run -> disconnect" jobs.
+"""
+
 import re
-import time
 import shutil
-from typing import Optional
+import time
+from dataclasses import dataclass
+from typing import Optional, Any
 
 import pexpect
 
-# Prompt ของ ZTE: user exec '>' และ privileged '#'
-PROMPT_RE = re.compile(r"[>#]\s*$")
+
+# --- Prompt / message patterns (ZTE typical) ---
+PROMPT_RE = re.compile(r"[>#]\s*$", re.M)  # user exec '>' / privileged '#'
+LOGIN_RE = re.compile(r"(?i)(username:|login:)")
 PASS_RE = re.compile(r"(?i)password:")
 LOGIN_FAIL_RE = re.compile(r"(?i)(login incorrect|bad password|authentication failed)")
-DENIED_RE = re.compile(r"(?i)(denied|failed|not authorized|invalid|incorrect)")
+DENIED_RE = re.compile(r"(?i)(denied|not authorized|invalid|incorrect|failed)")
 MORE_RE = re.compile(r"--More--")
 
-# ✅ Map Role -> Enable level
+# map role -> enable level
 ROLE_TO_ENABLE = {"OLT_VIEW": 1, "OLT_ENGINEER": 7, "OLT_ADMIN": 15}
 
-
-def _expect_capture(
-    child: pexpect.spawn,
-    patterns,
-    out_chunks: list[str],
-    *,
-    timeout: Optional[int] = None,
-) -> int:
-    """expect แล้วเก็บ output ทั้ง before/after สำหรับ debug"""
-    idx = child.expect(patterns, timeout=timeout)
-    out_chunks.append(child.before or "")
-    out_chunks.append(child.after or "")
-    return idx
+# ANSI / cursor-control cleanup (helps for help output like: `pon ?`)
+_ANSI_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+_CSI_MOVE_RE = re.compile(r"\x1B\[[0-9;]*[A-Za-z]")
 
 
-def _send(child: pexpect.spawn, cmd: str):
-    child.sendline(cmd)
-    time.sleep(0.1)
+def _strip_ansi(s: str) -> str:
+    if not s:
+        return ""
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
+    s = _ANSI_RE.sub("", s)
+    s = _CSI_MOVE_RE.sub("", s)
+    return s
+
+
+def _normalize_backspaces(s: str) -> str:
+    if not s:
+        return ""
+    buf: list[str] = []
+    for ch in s:
+        if ch == "\b":
+            if buf:
+                buf.pop()
+        else:
+            buf.append(ch)
+    return "".join(buf)
+
+
+def _clean_output(s: str) -> str:
+    s = _strip_ansi(s)
+    s = _normalize_backspaces(s)
+    # reduce excessive blank lines
+    s = re.sub(r"\n{4,}", "\n\n\n", s)
+    return s
+
+
+def _cap(child: pexpect.spawn) -> str:
+    """Capture child.before + child.after safely."""
+    before = child.before or ""
+    after = child.after if isinstance(child.after, str) else ""
+    return before + after
+
+
+def _telnet_bin() -> str:
+    # Prefer absolute path (systemd often has limited PATH)
+    for p in ("/usr/bin/telnet", "/bin/telnet"):
+        try:
+            if shutil.which(p) or (p and __import__("os").path.exists(p)):
+                return p
+        except Exception:
+            pass
+    return shutil.which("telnet") or "/usr/bin/telnet"
 
 
 def _resolve_enable_level(role: Optional[str], enable_level: Optional[int]) -> int:
-    """เลือก enable level จาก role ก่อน ถ้าไม่ส่ง role ค่อยใช้ enable_level; default = 15"""
     if role:
         return int(ROLE_TO_ENABLE.get(role.strip().upper(), 15))
     if enable_level is not None:
@@ -47,144 +99,217 @@ def _resolve_enable_level(role: Optional[str], enable_level: Optional[int]) -> i
     return 15
 
 
-def auto_enable_level(
+@dataclass
+class TelnetCommandResult:
+    cmd: str
+    output: str
+
+
+def _expect_one(
     child: pexpect.spawn,
+    patterns: list[Any],
     out_chunks: list[str],
+    *,
+    timeout: int,
+) -> int:
+    idx = child.expect(patterns, timeout=timeout)
+    out_chunks.append(_cap(child))
+    return idx
+
+
+def _login(
+    child: pexpect.spawn,
+    *,
+    username: str,
+    password: str,
+    timeout: int,
+    out_chunks: list[str],
+) -> None:
+    """Login and stop at a prompt."""
+    username = (username or "").strip()
+    if not username:
+        raise ValueError("username is required")
+
+    idx = _expect_one(
+        child,
+        [LOGIN_RE, PASS_RE, PROMPT_RE, DENIED_RE, pexpect.TIMEOUT, pexpect.EOF],
+        out_chunks,
+        timeout=timeout,
+    )
+
+    if idx == 3:
+        raise RuntimeError("Login denied (device refused before credentials).")
+    if idx == 4:
+        raise TimeoutError("Timeout waiting for login prompt.")
+    if idx == 5:
+        raise RuntimeError("Connection closed (EOF) while waiting for login prompt.")
+
+    if idx == 2:
+        return
+
+    if idx == 0:
+        child.sendline(username)
+        _expect_one(child, [PASS_RE, DENIED_RE, pexpect.TIMEOUT, pexpect.EOF], out_chunks, timeout=timeout)
+        if DENIED_RE.search(out_chunks[-1]) if out_chunks else False:
+            raise RuntimeError("Login denied after sending username.")
+
+    child.sendline(password)
+
+    idx2 = _expect_one(
+        child,
+        [PROMPT_RE, LOGIN_FAIL_RE, DENIED_RE, pexpect.TIMEOUT, pexpect.EOF],
+        out_chunks,
+        timeout=max(3, int(timeout) * 2),
+    )
+    if idx2 in (1, 2):
+        raise RuntimeError("Login failed (bad username/password or denied).")
+    if idx2 == 3:
+        raise TimeoutError("Timeout waiting for prompt after login.")
+    if idx2 == 4:
+        raise RuntimeError("Connection closed (EOF) after login.")
+
+
+def _auto_enable(
+    child: pexpect.spawn,
     *,
     level: int,
     login_password: str,
-    enable_password: Optional[str] = None,
-    timeout: int = 8,
-    verify: bool = False,
-) -> int:
-    """
-    ✅ หลัง login แล้ว “ยกระดับ” อัตโนมัติ: enable <level> แล้วตอบ Password:
-    - ถ้ามี enable_password จะส่งอันนั้นก่อน
-    - ถ้าไม่มี จะส่ง login_password (รองรับ enable <level> = login ใน pass.secret)
-    - verify=True จะยิง show privilege เพื่อตรวจระดับจริง
-    """
-    # ถ้าอยู่ที่ '>' ให้ยกชั้น
-    # (ถ้าอยู่ '# 'แล้วก็ไม่ต้องทำอะไร)
-    # หมายเหตุ: เราอิง prompt ล่าสุดที่ child.after
-    if (child.after or "").strip().endswith(">"):
-        _send(child, f"enable {int(level)}")
+    enable_password: Optional[str],
+    timeout: int,
+    out_chunks: list[str],
+) -> None:
+    """If currently at '>' prompt, send `enable <level>` and answer password if asked."""
+    prompt = (child.after or "") if isinstance(child.after, str) else ""
+    if not prompt.strip().endswith(">"):
+        return
 
-        idx = _expect_capture(
+    child.sendline(f"enable {int(level)}")
+    idx = _expect_one(
+        child,
+        [PASS_RE, PROMPT_RE, DENIED_RE, pexpect.TIMEOUT, pexpect.EOF],
+        out_chunks,
+        timeout=timeout,
+    )
+    if idx == 0:
+        child.sendline((enable_password or "").strip() or (login_password or ""))
+        idx2 = _expect_one(
             child,
-            [PASS_RE, PROMPT_RE, DENIED_RE, pexpect.TIMEOUT],
+            [PROMPT_RE, DENIED_RE, pexpect.TIMEOUT, pexpect.EOF],
             out_chunks,
             timeout=timeout,
         )
+        if idx2 != 0:
+            raise RuntimeError("Enable failed (password wrong/denied/timeout).")
+    elif idx == 1:
+        return
+    elif idx == 2:
+        raise RuntimeError("Enable denied by device.")
+    elif idx == 3:
+        raise TimeoutError("Enable timeout.")
+    else:
+        raise RuntimeError("Connection closed (EOF) during enable.")
 
-        if idx == 0:  # Password:
-            _send(child, (enable_password or "").strip() or login_password)
-            idx2 = _expect_capture(
-                child,
-                [PROMPT_RE, DENIED_RE, pexpect.TIMEOUT],
-                out_chunks,
-                timeout=timeout,
-            )
-            if idx2 != 0:
-                raise RuntimeError("Enable failed (password wrong/denied/timeout).")
 
-        elif idx == 1:
-            # ได้ prompt กลับมาเลย (บางรุ่นไม่ถาม password)
-            pass
-        elif idx == 2:
-            raise RuntimeError("Enable denied by device/TACACS.")
-        else:
-            raise RuntimeError("Enable timeout.")
+def _run_one_command(
+    child: pexpect.spawn,
+    *,
+    cmd: str,
+    timeout: int,
+    out_chunks: list[str],
+) -> str:
+    """Send one command and read until prompt. Returns raw output for this command."""
+    child.sendline(cmd)
+    buf: list[str] = []
 
-    if not verify:
-        return int(level)
+    while True:
+        idx = child.expect([MORE_RE, PROMPT_RE, DENIED_RE, LOGIN_FAIL_RE, pexpect.TIMEOUT, pexpect.EOF], timeout=timeout)
+        piece = _cap(child)
+        out_chunks.append(piece)
+        buf.append(piece)
 
-    # verify ด้วย show privilege
-    _send(child, "show privilege")
-    _expect_capture(child, [PROMPT_RE, pexpect.TIMEOUT], out_chunks, timeout=timeout)
-    m = re.search(r"Current privilege level is\s+(\d+)", "".join(out_chunks))
-    return int(m.group(1)) if m else -1
+        if idx == 0:
+            child.send(" ")
+            time.sleep(0.05)
+            continue
+        if idx == 1:
+            break
+        if idx in (2, 3):
+            raise RuntimeError(f"Command denied/failed: {cmd}")
+        if idx == 4:
+            raise TimeoutError(f"Timeout waiting for prompt after command: {cmd}")
+        break
+
+    return "".join(buf)
 
 
 def telnet_exec_commands(
     host: str,
-    admin_user: str,
-    admin_pass: str,
-    enable_pass: str | None,
-    commands: list[str],
-    timeout: int = 8,
     *,
-    role: str | None = None,
-    enable_level: int | None = None,
+    commands: list[str],
+    timeout: int = 10,
+    # credentials (accept both naming styles)
+    username: Optional[str] = None,
+    password: Optional[str] = None,
+    enable_password: Optional[str] = None,
+    admin_user: Optional[str] = None,
+    admin_pass: Optional[str] = None,
+    enable_pass: Optional[str] = None,
+    # privilege / enable behavior
+    role: Optional[str] = None,
+    enable_level: Optional[int] = None,
     auto_enable: bool = True,
+    # output behavior
+    debug: bool = False,
+    max_output_chars: int = 12000,
 ) -> str:
-    """
-    เปิด telnet -> login -> (auto enable ตาม role/enable_level) -> ยิง commands -> ออก
-    คืนค่า output ทั้งหมด (เผื่อ debug)
+    """Connect via telnet, login, (optionally) enable, run commands, disconnect."""
+    host = (host or "").strip()
+    if not host:
+        raise ValueError("host is required")
 
-    - ถ้าส่ง role="OLT_VIEW"/"OLT_ENGINEER"/"OLT_ADMIN" จะ auto enable เป็น 1/7/15 ตาม ROLE_TO_ENABLE
-    - ถ้าไม่ส่ง role แต่ส่ง enable_level=1/7/15 ก็ทำงานเหมือนกัน
-    - ถ้า auto_enable=False จะไม่ยิง enable ให้อัตโนมัติ
-    """
-    TELNET_BIN = shutil.which("telnet") or "/usr/bin/telnet"
-    child = pexpect.spawn(TELNET_BIN, [host], encoding="utf-8", timeout=timeout)
+    user = (username if username is not None else admin_user) or ""
+    pw = (password if password is not None else admin_pass) or ""
+    en_pw = (enable_password if enable_password is not None else enable_pass)
+
+    if not user.strip():
+        raise ValueError("username/admin_user is required")
+    if pw is None:
+        pw = ""
+
+    telnet_bin = _telnet_bin()
+    child = pexpect.spawn(telnet_bin, [host], encoding="utf-8", timeout=timeout)
+    child.delaybeforesend = 0.05
+
     out_chunks: list[str] = []
+    per_cmd: list[TelnetCommandResult] = []
 
     try:
-        # login
-        _expect_capture(child, [r"(Username:|login:)", r"Connected", r"Escape character", pexpect.TIMEOUT], out_chunks)
-        if "Username" in (child.after or "") or "login" in (child.after or ""):
-            _send(child, admin_user)
-            _expect_capture(child, [r"Password:", pexpect.TIMEOUT], out_chunks)
-            _send(child, admin_pass)
-        else:
-            # บางรุ่นมันพิมพ์หลายบรรทัดก่อนถึง Username
-            _expect_capture(child, [r"(Username:|login:)", pexpect.TIMEOUT], out_chunks)
-            _send(child, admin_user)
-            _expect_capture(child, [r"Password:", pexpect.TIMEOUT], out_chunks)
-            _send(child, admin_pass)
+        _login(child, username=user, password=pw, timeout=timeout, out_chunks=out_chunks)
 
-        # เข้าสู่ prompt
-        idx = _expect_capture(child, [PROMPT_RE, LOGIN_FAIL_RE, pexpect.TIMEOUT], out_chunks)
-        if idx == 1:
-            raise RuntimeError("Login failed (bad username/password).")
-        if idx == 2:
-            raise RuntimeError("Login timeout (no prompt).")
-
-        # ✅ auto enable ตาม role/enable_level
         if auto_enable:
             lvl = _resolve_enable_level(role, enable_level)
-            # ถ้าอยู่ที่ '>' ให้ยกระดับ
-            if (child.after or "").strip().endswith(">"):
-                auto_enable_level(
-                    child,
-                    out_chunks,
-                    level=lvl,
-                    login_password=admin_pass,
-                    enable_password=enable_pass,
-                    timeout=timeout,
-                    verify=False,
-                )
-                # หลัง enable ควรเป็น '#'
-                _expect_capture(child, [PROMPT_RE, pexpect.TIMEOUT], out_chunks, timeout=timeout)
+            _auto_enable(
+                child,
+                level=lvl,
+                login_password=pw,
+                enable_password=en_pw,
+                timeout=timeout,
+                out_chunks=out_chunks,
+            )
 
-        # ยิงคำสั่ง
         for cmd in commands:
-            _send(child, cmd)
+            cmd = "" if cmd is None else str(cmd)
+            cmd = cmd.rstrip("\n")
+            if not cmd:
+                continue
+            raw = _run_one_command(child, cmd=cmd, timeout=timeout, out_chunks=out_chunks)
+            per_cmd.append(TelnetCommandResult(cmd=cmd, output=_clean_output(raw)))
 
-            # handle --More-- (ถ้ามี)
-            while True:
-                idx2 = child.expect([PROMPT_RE, MORE_RE, pexpect.TIMEOUT], timeout=timeout)
-                out_chunks.append(child.before or "")
-                out_chunks.append(child.after or "")
-
-                if idx2 == 1:
-                    child.send(" ")  # next page
-                    continue
-                break
-
-        _send(child, "exit")
-        # บางรุ่นต้อง exit 2 ครั้ง
-        child.expect([pexpect.EOF, pexpect.TIMEOUT], timeout=3)
+        try:
+            child.sendline("exit")
+            child.expect([pexpect.EOF, pexpect.TIMEOUT], timeout=2)
+        except Exception:
+            pass
 
     finally:
         try:
@@ -192,5 +317,24 @@ def telnet_exec_commands(
         except Exception:
             pass
 
-    return "".join(out_chunks)
+    lines: list[str] = []
+    banner = _clean_output("".join(out_chunks))
+    if banner.strip() and debug:
+        lines.append("=== CONNECT/LOGIN (raw-ish) ===")
+        lines.append(banner.strip())
+
+    lines.append(f"=== OLT TELNET JOB: {host} ===")
+
+    for item in per_cmd:
+        lines.append("")
+        lines.append(f"$ {item.cmd}")
+        out = (item.output or "").strip()
+        if out:
+            lines.append(out)
+
+    text = "\n".join(lines).strip() + "\n"
+    if max_output_chars and len(text) > int(max_output_chars):
+        text = text[: int(max_output_chars)] + "\n... (truncated)\n"
+
+    return text
 

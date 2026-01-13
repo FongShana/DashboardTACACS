@@ -51,13 +51,9 @@
     </div>
   </div>
 
-  <div class="form-row" style="margin-top: 10px;">
-    <label style="display:flex; align-items:center; gap:10px;">
-      <input type="checkbox" name="bootstrap" value="1" checked>
-      <span>
-        Bootstrap AAA templates (2128) + system-user bind (128) on this OLT
-      </span>
-    </label>
+  <div class="hint" style="margin-top: 10px;">
+    Add Device จะเพิ่มลง <code>policy.json</code> เท่านั้น (ปลอดภัยกว่า)
+    — การยิงคำสั่งไปที่ OLT ให้กดปุ่ม <b>Bootstrap AAA</b> ในตารางด้านล่าง
   </div>
 
   <button type="submit" class="btn btn-primary">Add Device</button>
@@ -85,11 +81,28 @@
           <td>{{ d.ip }}</td>
           <td>{{ d.site }}</td>
           <td>{{ d.status }}</td>
-          <td>
+          <td class="actions">
             <a href="{{ url_for('devices.edit_device_form', name=d.name) }}"
                class="btn btn-secondary btn-sm">
               Edit
             </a>
+            <form method="post"
+                  action="{{ url_for('devices.bootstrap_device_submit', name=d.name) }}"
+                  style="display:inline;">
+              <label class="inline-check">
+                <input type="checkbox" name="save" value="1">
+                <span>write</span>
+              </label>
+              <button type="submit" name="dry_run" value="1"
+                      class="btn btn-secondary btn-sm"
+                      onclick="return confirm('Preview bootstrap (no changes) บน {{ d.name }} ?')">
+                Preview
+              </button>
+              <button type="submit" class="btn btn-primary btn-sm"
+                      onclick="return confirm('Bootstrap AAA templates (2128) + bind template (128) บน {{ d.name }} ?')">
+                Bootstrap AAA
+              </button>
+            </form>
             <form method="post"
                   action="{{ url_for('devices.delete_device_form', name=d.name) }}"
                   style="display:inline;">
@@ -111,5 +124,6 @@
 </section>
 
 {% endblock %}
+
 
 

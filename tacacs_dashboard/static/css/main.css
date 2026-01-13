@@ -456,3 +456,14 @@ code {
   flex: 1 1 320px;
   min-height: 1.25rem;
 }
+
+/* Devices page */
+
+.flash { 
+  white-space: pre-wrap; /* ✅ preserve newlines for telnet output */
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  font-size: 0.85rem;
+  line-height: 1.35;
+}
+

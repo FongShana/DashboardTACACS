@@ -38,7 +38,8 @@ def create_device_form():
     vendor = request.form.get("vendor", "")
     site = request.form.get("site", "")
     status = request.form.get("status", "Unknown")
-    bootstrap = (request.form.get("bootstrap") or "").strip().lower() in ("1", "true", "yes", "on")
+    # UX: "Add Device" should only add to policy.json.
+    # Bootstrap is a separate explicit action (safer).
 
     if not name or not ip:
         flash("กรุณากรอก Name และ IP ให้ครบ", "error")
@@ -67,19 +68,59 @@ def create_device_form():
 
     flash(f"เพิ่มอุปกรณ์ {name} เรียบร้อย", "success")
 
-    # Optional: bootstrap AAA templates + system-user binds on the OLT
-    if bootstrap:
-        auto_write = (_read_env("OLT_AUTO_WRITE", "0") or "0").strip().lower()
-        save = auto_write in ("1", "true", "yes")
-        try:
-            out = bootstrap_device_on_olt(ip, save=save, dry_run=False)
-            msg = out if len(out) <= 400 else out[:400] + " ... (truncated)"
+    return redirect(url_for("devices.index"))
+
+
+@bp.post("/bootstrap/<name>")
+def bootstrap_device_submit(name: str):
+    """Explicit bootstrap action (recommended UX).
+
+    - safe by default: does NOT `write` unless (a) user checks save, and
+      (b) OLT_AUTO_WRITE / OLT_ALLOW_WRITE env enables it.
+    - supports preview (dry-run) via button name="dry_run".
+    """
+
+    policy = load_policy()
+    devices = policy.get("devices", [])
+    dev = next((d for d in devices if (d.get("name") or "") == name), None)
+    if not dev:
+        flash(f"ไม่พบ Device {name}", "error")
+        return redirect(url_for("devices.index"))
+
+    ip = (dev.get("ip") or dev.get("address") or "").strip()
+    if not ip:
+        flash(f"Device {name} ไม่มี IP ใน policy.json", "error")
+        return redirect(url_for("devices.index"))
+
+    want_save = (request.form.get("save") or "").strip().lower() in ("1", "true", "yes", "on")
+    is_preview = (request.form.get("dry_run") or "").strip().lower() in ("1", "true", "yes", "on")
+
+    # extra safety gate (env)
+    allow_write_raw = (_read_env("OLT_ALLOW_WRITE", "") or "").strip().lower()
+    if not allow_write_raw:
+        allow_write_raw = (_read_env("OLT_AUTO_WRITE", "0") or "0").strip().lower()
+    allow_write = allow_write_raw in ("1", "true", "yes", "on")
+
+    save = bool(want_save and allow_write and not is_preview)
+    if want_save and not allow_write and not is_preview:
+        flash("ปฏิเสธการ write: ต้องเปิด OLT_ALLOW_WRITE=1 (หรือ OLT_AUTO_WRITE=1) ใน secret.env ก่อน", "error")
+
+    try:
+        out = bootstrap_device_on_olt(ip, save=save, dry_run=is_preview)
+        # flash needs to be reasonably small; keep the end of output (most useful)
+        out = (out or "").strip()
+        if len(out) > 2500:
+            out = "... (truncated)\n" + out[-2400:]
+
+        if is_preview:
+            flash(f"Preview Bootstrap (no changes) for {name} ({ip})\n{out}", "info")
+        else:
             flash(
-                f"Bootstrap AAA บน OLT {ip} สำเร็จ (save={'ON' if save else 'OFF'}): {msg}",
+                f"Bootstrap AAA on OLT {name} ({ip}) สำเร็จ (write={'ON' if save else 'OFF'})\n{out}",
                 "success",
             )
-        except Exception as e:
-            flash(f"Bootstrap AAA บน OLT {ip} ล้มเหลว: {e}", "error")
+    except Exception as e:
+        flash(f"Bootstrap AAA on OLT {name} ({ip}) ล้มเหลว: {e}", "error")
 
     return redirect(url_for("devices.index"))
 
@@ -154,5 +195,6 @@ def edit_device_submit(name):
     save_policy(policy)
     flash(f"บันทึก Device สำเร็จ", "success")
     return redirect(url_for("devices.index"))
+
 
 
