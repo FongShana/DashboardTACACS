@@ -1,8 +1,10 @@
 import re
+import subprocess
 from flask import Blueprint, render_template, request, redirect, url_for, flash
 
 from tacacs_dashboard.services.policy_store import load_policy, save_policy
 from tacacs_dashboard.services.tacacs_config import _read_env
+from tacacs_dashboard.services.tacacs_apply import generate_config_file, check_config_syntax
 from tacacs_dashboard.services.olt_bootstrap import bootstrap_device_on_olt
 
 bp = Blueprint("devices", __name__)
@@ -18,6 +20,61 @@ def _is_valid_ipv4(ip: str) -> bool:
     except ValueError:
         return False
     return all(0 <= n <= 255 for n in nums)
+
+
+# -----------------------
+# Helpers: generate/check/restart (for devices flow)
+# -----------------------
+def _restart_tac_plus_ng() -> tuple[bool, str]:
+    """Restart tac_plus-ng via systemd.
+
+    Requires sudoers to allow the web user to run systemctl restart without
+    password.
+    """
+    try:
+        r = subprocess.run(
+            ["/usr/bin/sudo", "/bin/systemctl", "restart", "tac_plus-ng"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        ok = (r.returncode == 0)
+        msg = (r.stdout or r.stderr or "").strip() or "(no output)"
+        return ok, msg
+    except Exception as e:
+        return False, str(e)
+
+
+def _run_generate_check_restart_and_flash() -> bool:
+    """Generate config + syntax check + restart tac_plus-ng.
+
+    Used from Devices/OLT page so that after adding a new device, operator can
+    explicitly apply config before bootstrapping.
+    """
+    path, line_count = generate_config_file()
+    ok, message = check_config_syntax(path)
+    short_msg = message if len(message) <= 400 else message[:400] + " ... (truncated)"
+
+    if not ok:
+        flash(
+            f"Generate config ที่ {path} แล้ว แต่ syntax check FAILED. Message: {short_msg}",
+            "error",
+        )
+        return False
+
+    flash(
+        f"Generate config สำเร็จ: {path} ({line_count} lines). Syntax check: OK. Message: {short_msg}",
+        "success",
+    )
+
+    rok, rmsg = _restart_tac_plus_ng()
+    rmsg_short = rmsg if len(rmsg) <= 400 else rmsg[:400] + " ... (truncated)"
+    if rok:
+        flash(f"Restart tac_plus-ng สำเร็จ: {rmsg_short}", "success")
+        return True
+
+    flash(f"Restart tac_plus-ng ล้มเหลว: {rmsg_short}", "error")
+    return False
 
 
 @bp.route("/")
@@ -68,6 +125,17 @@ def create_device_form():
 
     flash(f"เพิ่มอุปกรณ์ {name} เรียบร้อย", "success")
 
+    # ✅ Reminder: TACACS config needs to be applied so the new OLT host/key is
+    # known by tac_plus-ng. Bootstrap is a separate step.
+    flash("หมายเหตุ: เพิ่ม Device แล้ว กรุณากด 'Generate & Apply TACACS Config' ก่อน จากนั้นค่อย Bootstrap AAA", "info")
+
+    return redirect(url_for("devices.index"))
+
+
+@bp.post("/generate-config")
+def generate_config_submit():
+    """Generate & apply TACACS config from Devices/OLT page."""
+    _run_generate_check_restart_and_flash()
     return redirect(url_for("devices.index"))
 
 
