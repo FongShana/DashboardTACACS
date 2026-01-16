@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+
+{% block title %}Web Accounts - NT TACACS+ Dashboard{% endblock %}
+{% block header %}Admin: Web Login Accounts{% endblock %}
+
+{% block content %}
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="flash-container">
+        {% for category, message in messages %}
+          <div class="flash flash-{{ category }}">{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
+  <section class="section">
+    <div class="form-card">
+      <div class="form-title">Add Web Login User (Admin only)</div>
+      <form method="post" action="{{ url_for('auth.web_users_add') }}">
+        <div class="form-grid">
+          <div class="form-row">
+            <label>Username</label>
+            <input class="input" name="username" placeholder="e.g. noc01" required>
+          </div>
+          <div class="form-row">
+            <label>Password</label>
+            <input class="input" type="password" name="password" placeholder="set a strong password" required>
+          </div>
+          <div class="form-row">
+            <label>Role</label>
+            <select class="input" name="role">
+              <option value="user" selected>User</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+        </div>
+        <button class="btn btn-primary" type="submit">Create Web User</button>
+      </form>
+      <div class="hint">หมายเหตุ: บัญชีนี้ใช้สำหรับ “Login เข้าเว็บ Dashboard” เท่านั้น (ไม่ใช่บัญชี TACACS สำหรับเข้า OLT)</div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2 class="section-title">Existing Web Accounts</h2>
+    <div class="table-wrapper">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Username</th>
+            <th>Role</th>
+            <th>Created</th>
+            <th class="actions">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for u in users %}
+            <tr>
+              <td class="text-mono">{{ u.username or u['username'] }}</td>
+              <td>
+                {% set r = u.role if u.role is defined else u['role'] %}
+                {% if r == 'admin' %}
+                  <span class="badge badge-success">admin</span>
+                {% else %}
+                  <span class="badge badge-neutral">user</span>
+                {% endif %}
+              </td>
+              <td class="small text-mono">{{ u.created_at if u.created_at is defined else u.get('created_at','-') }}</td>
+              <td class="actions">
+                {% set uname = u.username if u.username is defined else u['username'] %}
+                {% if uname != current_user %}
+                  <form method="post" action="{{ url_for('auth.web_users_delete') }}" style="display:inline">
+                    <input type="hidden" name="username" value="{{ uname }}">
+                    <button class="btn btn-danger btn-sm" type="submit" onclick="return confirm('Delete web user: {{ uname }} ?');">Delete</button>
+                  </form>
+                {% else %}
+                  <span class="hint">(current)</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}

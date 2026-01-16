@@ -18,3 +18,4 @@ pass.secret
 *.log
 
 user_secrets.json
+web_users.json

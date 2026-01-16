@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Login - NT TACACS+ Dashboard</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
+  </head>
+  <body class="auth-page">
+    <div class="auth-wrapper">
+      <div class="auth-card">
+        <h1 class="auth-title">NT TACACS+ Dashboard</h1>
+        <div class="auth-sub">Sign in</div>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            <div class="flash-container">
+              {% for category, message in messages %}
+                <div class="flash flash-{{ category }}">{{ message }}</div>
+              {% endfor %}
+            </div>
+          {% endif %}
+        {% endwith %}
+
+        <form method="post" action="{{ url_for('auth.login_submit') }}" class="auth-form">
+          <input type="hidden" name="next" value="{{ next or '' }}">
+
+          <div class="form-row">
+            <label>Username</label>
+            <input class="input" name="username" placeholder="username" autocomplete="username" required>
+          </div>
+
+          <div class="form-row">
+            <label>Password</label>
+            <input class="input" type="password" name="password" placeholder="password" autocomplete="current-password" required>
+          </div>
+
+          <div class="auth-actions">
+            <button class="btn btn-primary" type="submit">Login</button>
+          </div>
+
+        </form>
+      </div>
+    </div>
+  </body>
+</html>

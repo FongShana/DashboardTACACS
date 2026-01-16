@@ -124,6 +124,18 @@ body {
   color: #9ca3af;
 }
 
+.sidebar-logout {
+  display: inline-block;
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  color: #bfdbfe;
+  text-decoration: none;
+}
+
+.sidebar-logout:hover {
+  text-decoration: underline;
+}
+
 /* Main area */
 .main {
   margin-left: 260px;   /* เว้นที่ให้ sidebar ด้านซ้าย */
@@ -200,6 +212,60 @@ body {
   padding: 1rem 1.1rem;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
   border: 1px solid #e5e7eb;
+}
+
+/* Flash messages (used by bootstrap/provision actions) */
+.flash-container {
+  margin-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.flash {
+  padding: 0.75rem 1rem;
+  border-radius: 0.75rem;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+  white-space: pre-wrap; /* ✅ preserve newlines for telnet output */
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  font-size: 0.85rem;
+  line-height: 1.35;
+}
+
+.flash-success {
+  border-color: #86efac;
+}
+
+.flash-error {
+  border-color: #fecaca;
+}
+
+.flash-info {
+  border-color: #bfdbfe;
+}
+
+.hint {
+  font-size: 0.85rem;
+  color: #6b7280;
+}
+
+.actions {
+  white-space: nowrap;
+}
+
+.inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-right: 0.5rem;
+  font-size: 0.8rem;
+  color: #374151;
+}
+
+.inline-check input {
+  transform: translateY(1px);
 }
 
 .table {
@@ -457,13 +523,53 @@ code {
   min-height: 1.25rem;
 }
 
-/* Devices page */
-
-.flash { 
-  white-space: pre-wrap; /* ✅ preserve newlines for telnet output */
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
-  font-size: 0.85rem;
-  line-height: 1.35;
+/* ---------------------------
+   Auth (Login page)
+   --------------------------- */
+.auth-page {
+  background: #0b1220;
 }
+
+.auth-wrapper {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1rem;
+}
+
+.auth-card {
+  width: min(520px, 100%);
+  background: #ffffff;
+  border-radius: 0.75rem;
+  border: 1px solid #e5e7eb;
+  padding: 1.5rem;
+  box-shadow: 0 2px 12px rgba(15, 23, 42, 0.12);
+}
+
+.auth-title {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 800;
+}
+
+.auth-sub {
+  margin-top: 0.25rem;
+  color: #6b7280;
+  font-size: 0.9rem;
+  margin-bottom: 1rem;
+}
+
+.auth-actions {
+  margin-top: 0.75rem;
+}
+
+.auth-hint {
+  margin-top: 0.9rem;
+  font-size: 0.85rem;
+  color: #6b7280;
+  line-height: 1.4;
+}
+
+
 

@@ -21,14 +21,18 @@
            <a href="{{ url_for('devices.index') }}" class="nav-item {% if active_page=='devices' %}nav-item-active{% endif %}">Devices / OLT</a>
            <a href="{{ url_for('logs.index') }}" class="nav-item {% if active_page=='logs' %}nav-item-active{% endif %}">Logs &amp; Audit</a>
            <a href="{{ url_for('terminal.terminal_page') }}" class="nav-item {% if active_page=='terminal' %}nav-item-active{% endif %}">Web Terminal</a>
+           {% if is_admin %}
+             <a href="{{ url_for('auth.web_users') }}" class="nav-item {% if active_page=='admin' %}nav-item-active{% endif %}">Admin: Web Accounts</a>
+           {% endif %}
         </nav>
 
         <div class="sidebar-footer">
           <div class="sidebar-user">
-            <div class="user-avatar">A</div>
+            <div class="user-avatar">{{ (current_user or 'U')[:1]|upper }}</div>
             <div class="user-info">
-              <div class="user-name">admin</div>
-              <div class="user-role">NT NOC</div>
+              <div class="user-name">{{ current_user or '-' }}</div>
+              <div class="user-role">{{ 'admin' if is_admin else (current_role or 'user') }}</div>
+              <a class="sidebar-logout" href="{{ url_for('auth.logout') }}">Logout</a>
             </div>
           </div>
         </div>
