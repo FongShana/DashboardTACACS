@@ -20,12 +20,20 @@ def index():
     device_filter = (request.args.get("device") or "").strip()
     result_filter = (request.args.get("result") or "").strip()
 
+    # --- command log filters ---
+    cmd_user_filter = (request.args.get("cmd_user") or "").strip()
+    cmd_device_filter = (request.args.get("cmd_device") or "").strip()
+    cmd_contains_filter = (request.args.get("cmd_contains") or "").strip()
+
     # --- เตรียม list สำหรับ dropdown ---
     user_list = sorted({e.get("user") for e in recent_events if e.get("user")})
     device_list = sorted({e.get("device") for e in recent_events if e.get("device")})
     result_list = sorted({(e.get("result") or "").upper()
                           for e in recent_events
                           if e.get("result")})
+
+    cmd_user_list = sorted({e.get("user") for e in command_events if e.get("user")})
+    cmd_device_list = sorted({e.get("device") for e in command_events if e.get("device")})
 
     # --- apply filter กับ auth events ---
     filtered_events = []
@@ -38,9 +46,23 @@ def index():
             continue
         filtered_events.append(e)
 
+    # --- apply filter กับ command events ---
+    filtered_cmd_events = []
+    needle = cmd_contains_filter.lower()
+    for e in command_events:
+        if cmd_user_filter and e.get("user") != cmd_user_filter:
+            continue
+        if cmd_device_filter and e.get("device") != cmd_device_filter:
+            continue
+        if needle:
+            hay = (e.get("command") or e.get("raw") or "").lower()
+            if needle not in hay:
+                continue
+        filtered_cmd_events.append(e)
+
     # --- สรุป stats ---
     total_events = len(filtered_events)
-    total_cmd = len(command_events)
+    total_cmd = len(filtered_cmd_events)
 
     total_success = sum(
         1 for e in filtered_events
@@ -54,12 +76,22 @@ def index():
     unique_user_count = len({e.get("user") for e in filtered_events if e.get("user")})
     unique_device_count = len({e.get("device") for e in filtered_events if e.get("device")})
 
+    cmd_unique_user_count = len({e.get("user") for e in filtered_cmd_events if e.get("user")})
+    cmd_unique_device_count = len({e.get("device") for e in filtered_cmd_events if e.get("device")})
+
+    # breakdown (top users) สำหรับ command filter
+    from collections import Counter
+
+    cmd_user_breakdown = Counter(
+        (e.get("user") or "").strip() for e in filtered_cmd_events if (e.get("user") or "").strip()
+    ).most_common(10)
+
     return render_template(
         "logs.html",
         active_page="logs",
         # ตารางหลัก
         recent_events=filtered_events,
-        command_events=command_events,
+        command_events=filtered_cmd_events,
         user_stats=user_stats,
         # summary card
         total_events=total_events,
@@ -75,5 +107,16 @@ def index():
         user_filter=user_filter,
         device_filter=device_filter,
         result_filter=result_filter,
+
+        # command filter
+        cmd_user_list=cmd_user_list,
+        cmd_device_list=cmd_device_list,
+        cmd_user_filter=cmd_user_filter,
+        cmd_device_filter=cmd_device_filter,
+        cmd_contains_filter=cmd_contains_filter,
+        cmd_unique_user_count=cmd_unique_user_count,
+        cmd_unique_device_count=cmd_unique_device_count,
+        cmd_user_breakdown=cmd_user_breakdown,
     )
+
 
