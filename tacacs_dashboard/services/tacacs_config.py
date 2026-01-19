@@ -58,22 +58,35 @@ def _parse_privilege(value) -> int:
 
 
 def _user_profile_lines(role_name: str, priv: int) -> list[str]:
-    """
-    สร้าง profile.script ใน user (pass.secret) เพื่อคุมสิทธิ์
-    - VIEW: allow show/exit/logout/quit เท่านั้น
-    - ENGINEER: deny conf/config/configure (รวม conf t) แต่คำสั่งอื่น permit
-    - ADMIN: permit all
-    """
     role = (role_name or "OLT_VIEW").strip()
     p = max(1, min(15, int(priv)))
 
     lines: list[str] = []
     lines.append("  profile {")
     lines.append("    script {")
+
+    # Session authorization: set privilege at login
     lines.append("      if (service == exec) {")
-    lines.append(f"       set priv-lvl = {p}")
+    lines.append(f"        set priv-lvl = {p}")
     lines.append("        permit")
     lines.append("      }")
+
+    # Command authorization: requires OLT command-authorization to be enabled
+    lines.append("      if (service == shell) {")
+    lines.append('        if (cmd == "") permit')  # required for shell startup :contentReference[oaicite:3]{index=3}
+
+    if role == "OLT_VIEW":
+        # OLT มัก normalize "conf t" -> "configure terminal" :contentReference[oaicite:4]{index=4}
+        lines.append(r'        if (cmd =~ /^configure\s+terminal(\s|$)/) deny')
+        # กันเผื่อบางกรณีที่ส่งมาแค่ "configure" (ไม่ค่อยเจอ แต่ใส่ไว้ได้)
+        lines.append(r'        if (cmd =~ /^configure(\s|$)/) deny')
+
+    elif role == "OLT_ENGINEER":
+        lines.append(r'        if (cmd =~ /^reboot(\s|$)/) deny')
+
+    lines.append("        permit")
+    lines.append("      }")
+
     lines.append("      permit")
     lines.append("    }")
     lines.append("  }")
