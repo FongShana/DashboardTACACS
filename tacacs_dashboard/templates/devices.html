@@ -52,7 +52,7 @@
   </div>
 
   <div class="hint" style="margin-top: 10px;">
-    Add Device จะเพิ่มลง <code>policy.json</code> เท่านั้น (ปลอดภัยกว่า)
+    Add Device จะเพิ่มลง <code>policy.json</code> เท่านั้น
     — การยิงคำสั่งไปที่ OLT ให้กดปุ่ม <b>Bootstrap AAA</b> ในตารางด้านล่าง
   </div>
 
@@ -61,11 +61,6 @@
 
 <section class="section">
   <h2 class="section-title">Generate &amp; Apply TACACS+ Config</h2>
-  <p>
-    หลังจากเพิ่ม/แก้ไข Device ใน <code>policy.json</code> แนะนำให้กดปุ่มนี้เพื่อสร้าง
-    <code>tacacs-generated.cfg</code> และตรวจ syntax แล้ว restart <code>tac_plus-ng</code>
-    เพื่อให้ TACACS+ Server รู้จัก OLT ใหม่ (host/key) ก่อนทำ Bootstrap AAA.
-  </p>
 
   <form method="post" action="{{ url_for('devices.generate_config_submit') }}" style="margin-top:0.75rem;">
     <button type="submit" class="btn btn-primary" onclick="return confirm('Generate config + syntax check + restart tac_plus-ng ?')">
