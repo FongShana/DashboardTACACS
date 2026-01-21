@@ -82,7 +82,7 @@ def _user_profile_lines(role_name: str, priv: int) -> list[str]:
         lines.append(r'        if (cmd =~ /^configure(\s|$)/) deny')
 
     elif role == "OLT_ENGINEER":
-        lines.append(r'        if (cmd =~ /^reboot(\s|$)/) deny')
+        lines.append(r'        if (cmd =~ /^reload(\s|$)/) deny')
 
     lines.append("        permit")
     lines.append("      }")
