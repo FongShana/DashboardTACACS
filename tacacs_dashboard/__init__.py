@@ -62,12 +62,13 @@ def create_app():
     @app.context_processor
     def inject_current_user():
         username = session.get("web_username")
-        role = session.get("web_role")
+        role = (session.get("web_role") or "admin").strip().lower()
         return {
             "current_user": username,
             "current_role": role,
-            "is_admin": role == "admin",
+            "is_superadmin": role == "superadmin",
         }
 
     return app
+
 

@@ -12,6 +12,10 @@ from werkzeug.security import check_password_hash, generate_password_hash
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 
+
+ROLE_SUPERADMIN = 'superadmin'
+ROLE_ADMIN = 'admin'
+ALLOWED_ROLES = {ROLE_SUPERADMIN, ROLE_ADMIN}
 def _now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
@@ -49,38 +53,35 @@ def save_web_users(data: Dict[str, Any]) -> None:
 
 
 def ensure_bootstrap_admin() -> None:
-    """Ensure there is at least one admin account for dashboard login.
+    """Ensure there is at least one *superadmin* account for dashboard login.
 
-    - If web_users.json has users already: do nothing
-    - Else: create an admin using env DASHBOARD_ADMIN_USER/DASHBOARD_ADMIN_PASSWORD
-      If not provided, fall back to admin/admin (and you should change it immediately).
+    - If web_users.json already has users: do nothing
+    - Else: create a bootstrap account from secret.env
+      (DASHBOARD_ADMIN_USER / DASHBOARD_ADMIN_PASSWORD) with role "superadmin".
+
+    หมายเหตุ: เพื่อความปลอดภัย ฟังก์ชันนี้จะไม่สร้างบัญชีด้วยรหัสผ่านค่าเริ่มต้น
+    หากไม่ได้กำหนด DASHBOARD_ADMIN_PASSWORD ไว้ในระบบ
     """
     data = load_web_users()
     users: List[Dict[str, Any]] = data.get("users") or []
     if users:
         return
 
-    admin_user = (os.getenv("DASHBOARD_ADMIN_USER") or "admin").strip() or "admin"
-    admin_pass = os.getenv("DASHBOARD_ADMIN_PASSWORD") or "admin"
+    super_user = (os.getenv("DASHBOARD_ADMIN_USER") or "superadmin").strip() or "superadmin"
+    super_pass = os.getenv("DASHBOARD_ADMIN_PASSWORD")
+    if not super_pass:
+        return
 
     users.append(
         {
-            "username": admin_user,
-            "role": "admin",
-            "password_hash": generate_password_hash(admin_pass),
+            "username": super_user,
+            "role": ROLE_SUPERADMIN,
+            "password_hash": generate_password_hash(super_pass),
             "created_at": _now_iso(),
         }
     )
     data["users"] = users
     save_web_users(data)
-
-    # Warn in logs if env wasn't set
-    if not os.getenv("DASHBOARD_ADMIN_USER") or not os.getenv("DASHBOARD_ADMIN_PASSWORD"):
-        print(
-            "[WARN] Dashboard admin account was bootstrapped using the default credentials. "
-            "Set DASHBOARD_ADMIN_USER and DASHBOARD_ADMIN_PASSWORD and change it immediately."
-        )
-
 
 def authenticate(username: str, password: str) -> Optional[Dict[str, Any]]:
     ensure_bootstrap_admin()
@@ -90,32 +91,35 @@ def authenticate(username: str, password: str) -> Optional[Dict[str, Any]]:
     for u in (data.get("users") or []):
         if (u.get("username") or "").strip() == username:
             if check_password_hash(u.get("password_hash") or "", password):
-                return {"username": username, "role": u.get("role") or "user"}
+                role = (u.get("role") or ROLE_ADMIN).strip().lower()
+                return {"username": username, "role": role}
             return None
     return None
-
 
 def list_users() -> List[Dict[str, Any]]:
     ensure_bootstrap_admin()
     data = load_web_users()
     users = data.get("users") or []
-    # sort admin first, then name
+
+    # sort: superadmin first, then admin, then username
     def key(u: Dict[str, Any]):
-        return (0 if (u.get("role") == "admin") else 1, (u.get("username") or ""))
+        r = (u.get("role") or "").strip().lower()
+        bucket = 0 if r == ROLE_SUPERADMIN else (1 if r == ROLE_ADMIN else 2)
+        return (bucket, (u.get("username") or ""))
 
     return sorted(users, key=key)
 
-
-def add_user(username: str, password: str, role: str = "user") -> None:
+def add_user(username: str, password: str, role: str = ROLE_ADMIN) -> None:
     ensure_bootstrap_admin()
     username = (username or "").strip()
     if not username:
         raise ValueError("username is required")
     if not password:
         raise ValueError("password is required")
-    role = (role or "user").strip().lower()
-    if role not in ("admin", "user"):
-        role = "user"
+
+    role = (role or ROLE_ADMIN).strip().lower()
+    if role not in ALLOWED_ROLES:
+        raise ValueError("invalid role")
 
     data = load_web_users()
     users = data.get("users") or []
@@ -133,7 +137,6 @@ def add_user(username: str, password: str, role: str = "user") -> None:
     data["users"] = users
     save_web_users(data)
 
-
 def delete_user(username: str) -> bool:
     ensure_bootstrap_admin()
     username = (username or "").strip()
@@ -147,3 +150,4 @@ def delete_user(username: str) -> bool:
         return False
     save_web_users(data)
     return True
+

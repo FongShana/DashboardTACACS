@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block title %}Web Accounts - NT TACACS+ Dashboard{% endblock %}
-{% block header %}Admin: Web Login Accounts{% endblock %}
+{% block header %}Superadmin: Web Login Accounts{% endblock %}
 
 {% block content %}
   {% with messages = get_flashed_messages(with_categories=true) %}
@@ -16,7 +16,7 @@
 
   <section class="section">
     <div class="form-card">
-      <div class="form-title">Add Web Login User (Admin only)</div>
+      <div class="form-title">Add Web Login User (Superadmin only)</div>
       <form method="post" action="{{ url_for('auth.web_users_add') }}">
         <div class="form-grid">
           <div class="form-row">
@@ -30,8 +30,8 @@
           <div class="form-row">
             <label>Role</label>
             <select class="input" name="role">
-              <option value="user" selected>User</option>
-              <option value="admin">Admin</option>
+              <option value="admin" selected>Admin</option>
+              <option value="superadmin">Superadmin</option>
             </select>
           </div>
         </div>
@@ -59,10 +59,12 @@
               <td class="text-mono">{{ u.username or u['username'] }}</td>
               <td>
                 {% set r = u.role if u.role is defined else u['role'] %}
-                {% if r == 'admin' %}
-                  <span class="badge badge-success">admin</span>
+                {% if r == 'superadmin' %}
+                  <span class="badge badge-success">superadmin</span>
+                {% elif r == 'admin' %}
+                  <span class="badge badge-neutral">admin</span>
                 {% else %}
-                  <span class="badge badge-neutral">user</span>
+                  <span class="badge badge-neutral">{{ r }}</span>
                 {% endif %}
               </td>
               <td class="small text-mono">{{ u.created_at if u.created_at is defined else u.get('created_at','-') }}</td>
@@ -84,3 +86,4 @@
     </div>
   </section>
 {% endblock %}
+
