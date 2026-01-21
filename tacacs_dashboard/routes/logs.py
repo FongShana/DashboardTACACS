@@ -117,7 +117,9 @@ def index():
         cmd_unique_user_count=cmd_unique_user_count,
         cmd_unique_device_count=cmd_unique_device_count,
         cmd_user_breakdown=cmd_user_breakdown,
+        scan_all_cmd=scan_all_cmd,
     )
+
 
 
 

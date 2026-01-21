@@ -6,6 +6,8 @@ import re
 from datetime import datetime, timezone
 from collections import Counter
 from typing import Optional, Iterable
+from collections import deque
+import heapq
 from zoneinfo import ZoneInfo
 
 DISPLAY_TZ = ZoneInfo("Asia/Bangkok")  # UTC+7
@@ -122,18 +124,32 @@ def _event(
 def _read_recent_lines(files: list[Path], max_lines_each: int = 2000) -> Iterable[str]:
     """Yield non-empty lines from files.
 
+    Streaming implementation to avoid loading entire files into memory.
+
     max_lines_each behavior:
-      - max_lines_each > 0 : take only last N lines (tail) per file
-      - max_lines_each <= 0: read ALL lines in the file
+      - max_lines_each > 0 : take only last N non-empty lines (tail) per file
+      - max_lines_each <= 0: read ALL non-empty lines in the file
     """
+    take_tail = int(max_lines_each) > 0
+    tail_n = int(max_lines_each) if take_tail else 0
+
     for p in files:
         try:
-            lines = p.read_text(encoding="utf-8", errors="ignore").splitlines()
-            if int(max_lines_each) > 0 and len(lines) > int(max_lines_each):
-                lines = lines[-int(max_lines_each):]
-            for line in lines:
-                if line.strip():
+            if take_tail:
+                dq: deque[str] = deque(maxlen=tail_n)
+                with p.open("r", encoding="utf-8", errors="ignore") as f:
+                    for raw in f:
+                        line = raw.rstrip("\n")
+                        if line.strip():
+                            dq.append(line)
+                for line in dq:
                     yield line
+            else:
+                with p.open("r", encoding="utf-8", errors="ignore") as f:
+                    for raw in f:
+                        line = raw.rstrip("\n")
+                        if line.strip():
+                            yield line
         except Exception:
             continue
 
@@ -371,7 +387,9 @@ def get_command_events(
     d = (device or "").strip()
     needle = (contains or "").strip().lower()
 
-    cmds: list[dict] = []
+    # Keep only the newest `limit` events to cap memory even when scan_all=True.
+    heap: list[tuple[float, int, dict]] = []
+    seq = 0
     files = _all_files("acct-*.log") if scan_all else _latest_files("acct-*.log", max_files=max_files)
     per_file_lines = 0 if scan_all else max_lines_each
 
@@ -398,10 +416,22 @@ def get_command_events(
                     continue
 
         e["action"] = "command"
-        cmds.append(e)
 
-    cmds.sort(key=lambda x: x.get("_ts", 0.0), reverse=True)
-    out = cmds[: max(0, int(limit))]
+        ts = float(e.get("_ts") or 0.0)
+        seq += 1
+        item = (ts, seq, e)
+
+        # bounded "top-N" heap by timestamp
+        if int(limit) <= 0:
+            continue
+        if len(heap) < int(limit):
+            heapq.heappush(heap, item)
+        else:
+            if ts > heap[0][0]:
+                heapq.heapreplace(heap, item)
+
+    # Sort newest first
+    out = [it[2] for it in sorted(heap, key=lambda x: x[0], reverse=True)]
     for e in out:
         e.pop("_ts", None)
     return out
@@ -484,5 +514,6 @@ def get_all_events(limit: int = 5000) -> list[dict]:
     ใช้ใน api.py (กัน ImportError)
     """
     return get_recent_events(limit=limit)
+
 
 
