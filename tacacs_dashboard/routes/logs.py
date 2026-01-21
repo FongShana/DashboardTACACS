@@ -10,11 +10,6 @@ bp = Blueprint("logs", __name__)
 
 @bp.route("/")
 def index():
-    # ดึง event ล่าสุดจาก parser (ตอนนี้อาจยังเป็น log ตัวอย่าง)
-    recent_events = get_recent_events(limit=200)
-    user_stats = get_user_stats()
-    command_events = get_command_events(limit=200)
-
     # --- อ่าน filter จาก query string ---
     user_filter = (request.args.get("user") or "").strip()
     device_filter = (request.args.get("device") or "").strip()
@@ -24,6 +19,22 @@ def index():
     cmd_user_filter = (request.args.get("cmd_user") or "").strip()
     cmd_device_filter = (request.args.get("cmd_device") or "").strip()
     cmd_contains_filter = (request.args.get("cmd_contains") or "").strip()
+
+    # ดึง event ล่าสุดจาก parser
+    recent_events = get_recent_events(limit=200)
+    user_stats = get_user_stats()
+
+    # Command audit logs:
+    # - ปกติใช้ recent 200 (เร็ว)
+    # - ถ้ามีการกรอง (user/device/contains) ให้ scan ทุกไฟล์ acct ที่ยังเก็บอยู่ เพื่อค้นย้อนหลัง
+    scan_all_cmd = bool(cmd_user_filter or cmd_device_filter or cmd_contains_filter)
+    command_events = get_command_events(
+        limit=2000 if scan_all_cmd else 200,
+        scan_all=scan_all_cmd,
+        user=cmd_user_filter,
+        device=cmd_device_filter,
+        contains=cmd_contains_filter,
+    )
 
     # --- เตรียม list สำหรับ dropdown ---
     user_list = sorted({e.get("user") for e in recent_events if e.get("user")})
@@ -46,19 +57,8 @@ def index():
             continue
         filtered_events.append(e)
 
-    # --- apply filter กับ command events ---
-    filtered_cmd_events = []
-    needle = cmd_contains_filter.lower()
-    for e in command_events:
-        if cmd_user_filter and e.get("user") != cmd_user_filter:
-            continue
-        if cmd_device_filter and e.get("device") != cmd_device_filter:
-            continue
-        if needle:
-            hay = (e.get("command") or e.get("raw") or "").lower()
-            if needle not in hay:
-                continue
-        filtered_cmd_events.append(e)
+    # get_command_events() apply filters already
+    filtered_cmd_events = command_events
 
     # --- สรุป stats ---
     total_events = len(filtered_events)
@@ -118,5 +118,6 @@ def index():
         cmd_unique_device_count=cmd_unique_device_count,
         cmd_user_breakdown=cmd_user_breakdown,
     )
+
 
 

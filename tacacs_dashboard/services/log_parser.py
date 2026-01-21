@@ -120,16 +120,27 @@ def _event(
 
 
 def _read_recent_lines(files: list[Path], max_lines_each: int = 2000) -> Iterable[str]:
+    """Yield non-empty lines from files.
+
+    max_lines_each behavior:
+      - max_lines_each > 0 : take only last N lines (tail) per file
+      - max_lines_each <= 0: read ALL lines in the file
+    """
     for p in files:
         try:
             lines = p.read_text(encoding="utf-8", errors="ignore").splitlines()
-            if max_lines_each and len(lines) > max_lines_each:
-                lines = lines[-max_lines_each:]
+            if int(max_lines_each) > 0 and len(lines) > int(max_lines_each):
+                lines = lines[-int(max_lines_each):]
             for line in lines:
                 if line.strip():
                     yield line
         except Exception:
             continue
+
+
+def _all_files(glob_pat: str) -> list[Path]:
+    """Return all matching log files, newest first."""
+    return sorted(LOG_DIR.glob(glob_pat), key=lambda x: x.stat().st_mtime, reverse=True)
 
 
 def _latest_files(glob_pat: str, max_files: int = 4) -> list[Path]:
@@ -332,21 +343,62 @@ def get_recent_events(limit: int = 200) -> list[dict]:
     return out
 
 
-def get_command_events(limit: int = 200) -> list[dict]:
+def get_command_events(
+    limit: int = 200,
+    *,
+    scan_all: bool = False,
+    max_files: int = 4,
+    max_lines_each: int = 6000,
+    user: str = "",
+    device: str = "",
+    contains: str = "",
+) -> list[dict]:
+    """Return command audit events parsed from acct logs.
+
+    Default behavior (fast):
+      - read only latest `max_files` acct-*.log (newest first)
+      - tail `max_lines_each` lines per file
+      - return at most `limit` events
+
+    If scan_all=True (historical search):
+      - scan ALL acct-*.log files that still exist in LOG_DIR
+      - read ALL lines per file (no tail)
+      - apply optional filters (user/device/contains) while scanning
+      - return at most `limit` events (sorted newest first)
     """
-    ใช้ในหน้า Logs & Audit (Command Logs table)
-    ดึงจาก acct log เป็นหลัก (เพราะมี cmd ต่อท้าย)
-    """
+
+    u = (user or "").strip()
+    d = (device or "").strip()
+    needle = (contains or "").strip().lower()
+
     cmds: list[dict] = []
-    files = _latest_files("acct-*.log")
-    for line in _read_recent_lines(files, max_lines_each=6000):
+    files = _all_files("acct-*.log") if scan_all else _latest_files("acct-*.log", max_files=max_files)
+    per_file_lines = 0 if scan_all else max_lines_each
+
+    for line in _read_recent_lines(files, max_lines_each=per_file_lines):
         e = _parse_acct(line)
         if not e:
             continue
+
         cmd = (e.get("command") or "").strip()
-        if cmd:
-            e["action"] = "command"
-            cmds.append(e)
+        if not cmd:
+            continue
+
+        # apply filters early (helps when scan_all=True)
+        if u and (e.get("user") or "") != u:
+            continue
+        if d and (e.get("device") or "") != d:
+            continue
+        if needle:
+            hay = (cmd or "")
+            if needle not in hay.lower():
+                # fallback to raw if needed
+                raw = (e.get("raw") or "")
+                if needle not in raw.lower():
+                    continue
+
+        e["action"] = "command"
+        cmds.append(e)
 
     cmds.sort(key=lambda x: x.get("_ts", 0.0), reverse=True)
     out = cmds[: max(0, int(limit))]
@@ -432,4 +484,5 @@ def get_all_events(limit: int = 5000) -> list[dict]:
     ใช้ใน api.py (กัน ImportError)
     """
     return get_recent_events(limit=limit)
+
 
