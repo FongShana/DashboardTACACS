@@ -29,7 +29,7 @@ def index():
     # - ถ้ามีการกรอง (user/device/contains) ให้ scan ทุกไฟล์ acct ที่ยังเก็บอยู่ เพื่อค้นย้อนหลัง
     scan_all_cmd = bool(cmd_user_filter or cmd_device_filter or cmd_contains_filter)
     command_events = get_command_events(
-        limit=2000 if scan_all_cmd else 200,
+        limit=1600 if scan_all_cmd else 200,
         scan_all=scan_all_cmd,
         user=cmd_user_filter,
         device=cmd_device_filter,
