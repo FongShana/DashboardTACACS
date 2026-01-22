@@ -29,8 +29,7 @@ def _secrets_path() -> Path:
 
 
 def _default_password_from_env() -> str:
-    return _read_env("DEFAULT_USER_PASSWORD", "test") or "test"
-
+    return _read_env("DEFAULT_USER_PASSWORD")
 
 def load_user_secrets() -> Dict[str, Any]:
     path = _secrets_path()
@@ -54,6 +53,21 @@ def get_default_password() -> str:
     s = load_user_secrets()
     pw = (s.get("default_password") or "").strip()
     return pw or _default_password_from_env()
+
+
+def set_user_password(username: str, password: str) -> None:
+    username = (username or "").strip()
+    password = (password or "").strip()
+    if not username:
+        raise ValueError("username is required")
+    if not password:
+        raise ValueError("password is required")
+
+    s = load_user_secrets()
+    s.setdefault("users", {})
+    s["users"].setdefault(username, {})
+    s["users"][username]["password"] = password
+    save_user_secrets(s)
 
 
 def get_user_password(username: str) -> str:

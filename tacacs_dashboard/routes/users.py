@@ -18,6 +18,12 @@ from tacacs_dashboard.services.tacacs_config import _read_env
 from tacacs_dashboard.services.tacacs_apply import generate_config_file, check_config_syntax
 from tacacs_dashboard.services.olt_provision import provision_user_on_olt, deprovision_user_on_olt
 
+from tacacs_dashboard.services.user_secrets_store import (
+    set_user_password,
+    ensure_user_has_password,
+    delete_user_password,
+)
+
 bp = Blueprint("users", __name__)
 
 
@@ -240,6 +246,8 @@ def create_user_form():
     username = (request.form.get("username") or "").strip()
     role = (request.form.get("role") or "").strip()
     status = (request.form.get("status") or "Active").strip() or "Active"
+    password = (request.form.get("password") or "").strip()
+
 
     if not username or not role:
         flash("กรุณากรอก Username และ Role ให้ครบ", "error")
@@ -265,6 +273,12 @@ def create_user_form():
     upsert_user(username=username, role=role, status=status)
     flash(f"เพิ่มผู้ใช้ {username} เรียบร้อย", "success")
 
+    if password:
+        set_user_password(username, password)
+    else:
+        ensure_user_has_password(username)
+
+
     ok = _run_generate_check_restart_and_flash()
     if ok:
         _maybe_provision_to_olts(username=username, role=role, status=status)
@@ -285,6 +299,8 @@ def delete_user_form(username: str):
         return redirect(url_for("users.index"))
 
     flash(f"ลบผู้ใช้ {username} เรียบร้อย", "success")
+
+    delete_user_password(username)
 
     ok2 = _run_generate_check_restart_and_flash()
     if ok2:
@@ -329,6 +345,11 @@ def edit_user_submit(username):
 
     new_role = (request.form.get("role") or "").strip()
     new_status = (request.form.get("status") or "").strip() or "Active"
+    
+    new_password = (request.form.get("password") or "").strip()
+    if new_password:
+        set_user_password(username, new_password)
+
 
     policy = load_policy()
     roles = policy.get("roles", [])
