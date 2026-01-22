@@ -50,13 +50,15 @@
             <th>Username</th>
             <th>Role</th>
             <th>Created</th>
+            <th>Device Groups</th>
             <th class="actions">Actions</th>
           </tr>
         </thead>
         <tbody>
           {% for u in users %}
             <tr>
-              <td class="text-mono">{{ u.username or u['username'] }}</td>
+              {% set uname = u.username if u.username is defined else u['username'] %}
+              <td class="text-mono">{{ uname }}</td>
               <td>
                 {% set r = u.role if u.role is defined else u['role'] %}
                 {% if r == 'superadmin' %}
@@ -68,8 +70,16 @@
                 {% endif %}
               </td>
               <td class="small text-mono">{{ u.created_at if u.created_at is defined else u.get('created_at','-') }}</td>
+              <td>
+                {% if r == 'superadmin' %}
+                  <span class="badge badge-success">All</span>
+                {% else %}
+                  {% set gids = u.device_group_ids if u.device_group_ids is defined else u.get('device_group_ids', []) %}
+                  <span class="text-mono">{{ (gids|length) if gids else 0 }}</span>
+                  <a class="btn btn-secondary btn-sm" style="margin-left:0.5rem;" href="{{ url_for('auth.web_user_device_groups', username=uname) }}">Edit</a>
+                {% endif %}
+              </td>
               <td class="actions">
-                {% set uname = u.username if u.username is defined else u['username'] %}
                 {% if uname != current_user %}
                   <form method="post" action="{{ url_for('auth.web_users_delete') }}" style="display:inline">
                     <input type="hidden" name="username" value="{{ uname }}">
@@ -86,4 +96,5 @@
     </div>
   </section>
 {% endblock %}
+
 

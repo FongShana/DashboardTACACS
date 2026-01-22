@@ -1,7 +1,9 @@
-from flask import Blueprint, jsonify, request, Response
+from flask import Blueprint, jsonify, request, Response, session
 from tacacs_dashboard.services.log_parser import get_recent_events, get_summary, get_all_events
 from tacacs_dashboard.services.policy_store import load_policy, save_policy
 from tacacs_dashboard.services.tacacs_config import build_config_text
+from tacacs_dashboard.services.access_control import allowed_device_group_ids, device_in_scope
+from tacacs_dashboard.services.device_groups_store import group_exists
 
 bp = Blueprint("api", __name__)
 
@@ -37,7 +39,18 @@ def api_logs_all():
 
 @bp.get("/policy")
 def api_policy_all():
-    return jsonify(load_policy())
+    policy = load_policy()
+    role = (session.get("web_role") or "admin").strip().lower()
+    uname = (session.get("web_username") or "").strip()
+    allowed_gids = allowed_device_group_ids(role, uname)
+    if allowed_gids is not None:
+        # admin: only expose in-scope devices and their groups
+        devices = policy.get("devices", []) or []
+        policy["devices"] = [d for d in devices if isinstance(d, dict) and device_in_scope(d, allowed_gids)]
+        groups = policy.get("device_groups", []) or []
+        allowed_set = set(allowed_gids)
+        policy["device_groups"] = [g for g in groups if isinstance(g, dict) and (g.get("id") or "") in allowed_set]
+    return jsonify(policy)
 
 @bp.get("/users")
 def api_users():
@@ -49,7 +62,14 @@ def api_roles():
 
 @bp.get("/devices")
 def api_devices():
-    return jsonify(load_policy().get("devices", []))
+    policy = load_policy()
+    devices = policy.get("devices", []) or []
+    role = (session.get("web_role") or "admin").strip().lower()
+    uname = (session.get("web_username") or "").strip()
+    allowed_gids = allowed_device_group_ids(role, uname)
+    if allowed_gids is not None:
+        devices = [d for d in devices if isinstance(d, dict) and device_in_scope(d, allowed_gids)]
+    return jsonify(devices)
 
 @bp.get("/tacacs/config/preview")
 def api_tacacs_config_preview():
@@ -170,6 +190,7 @@ def api_create_device():
     ip = data.get("ip")
     site = data.get("site", "-")
     status = data.get("status", "Unknown")
+    group_id = (data.get("group_id") or "").strip().lower()
 
     if not name or not ip:
         return jsonify({
@@ -180,6 +201,21 @@ def api_create_device():
         return jsonify({
             "error": f"IP '{ip}' ไม่ใช่ IPv4 ที่ถูกต้อง"
         }), 400
+
+    # enforce group scope for admin
+    role = (session.get("web_role") or "admin").strip().lower()
+    uname = (session.get("web_username") or "").strip()
+    allowed_gids = allowed_device_group_ids(role, uname)
+    if allowed_gids is not None:
+        if not allowed_gids:
+            return jsonify({"error": "this admin has no device groups assigned"}), 403
+        if not group_id:
+            return jsonify({"error": "group_id is required for admin"}), 400
+        if group_id not in set(allowed_gids):
+            return jsonify({"error": "permission denied for this group"}), 403
+
+    if group_id and not group_exists(group_id):
+        return jsonify({"error": "group_id not found"}), 400
 
     policy = load_policy()
     devices = policy.get("devices", [])
@@ -195,7 +231,8 @@ def api_create_device():
         "vendor": vendor,
         "ip": ip,
         "site": site,
-        "status": status
+        "status": status,
+        "group_id": group_id,
     }
 
     devices.append(device)
@@ -211,6 +248,15 @@ def api_delete_device(name):
     """
     policy = load_policy()
     devices = policy.get("devices", [])
+
+    # scope check
+    role = (session.get("web_role") or "admin").strip().lower()
+    uname = (session.get("web_username") or "").strip()
+    allowed_gids = allowed_device_group_ids(role, uname)
+    if allowed_gids is not None:
+        target = next((d for d in devices if isinstance(d, dict) and (d.get("name") or "") == name), None)
+        if not target or not device_in_scope(target, allowed_gids):
+            return jsonify({"error": "permission denied"}), 403
 
     new_devices = [d for d in devices if d.get("name") != name]
 
@@ -301,3 +347,4 @@ def api_delete_role(name):
     save_policy(policy)
 
     return jsonify({"message": f"role '{name}' ถูกลบแล้ว"})
+

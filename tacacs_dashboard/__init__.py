@@ -9,6 +9,7 @@ from .routes.logs import bp as logs_bp
 from .routes.api import bp as api_bp
 from .routes.terminal import bp as terminal_bp
 from .routes.auth import bp as auth_bp
+from .routes.device_groups import bp as device_groups_bp
 
 
 def _is_public_endpoint(endpoint: str | None) -> bool:
@@ -30,6 +31,7 @@ def create_app():
 
     # register blueprints
     app.register_blueprint(auth_bp)
+    app.register_blueprint(device_groups_bp, url_prefix="/admin/device-groups")
     app.register_blueprint(dashboard_bp)
     app.register_blueprint(users_bp, url_prefix="/users")
     app.register_blueprint(devices_bp, url_prefix="/devices")
@@ -70,5 +72,6 @@ def create_app():
         }
 
     return app
+
 
 

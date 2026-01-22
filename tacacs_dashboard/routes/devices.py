@@ -1,11 +1,13 @@
 import re
 import subprocess
-from flask import Blueprint, render_template, request, redirect, url_for, flash
+from flask import Blueprint, render_template, request, redirect, url_for, flash, session
 
 from tacacs_dashboard.services.policy_store import load_policy, save_policy
 from tacacs_dashboard.services.tacacs_config import _read_env
 from tacacs_dashboard.services.tacacs_apply import generate_config_file, check_config_syntax
 from tacacs_dashboard.services.olt_bootstrap import bootstrap_device_on_olt
+from tacacs_dashboard.services.access_control import allowed_device_group_ids, device_in_scope
+from tacacs_dashboard.services.device_groups_store import list_device_groups, get_group_name_map, group_exists
 
 bp = Blueprint("devices", __name__)
 
@@ -20,6 +22,13 @@ def _is_valid_ipv4(ip: str) -> bool:
     except ValueError:
         return False
     return all(0 <= n <= 255 for n in nums)
+
+
+def _current_scope():
+    role = (session.get("web_role") or "admin").strip().lower()
+    uname = (session.get("web_username") or "").strip()
+    allowed_gids = allowed_device_group_ids(role, uname)
+    return role, uname, allowed_gids
 
 
 # -----------------------
@@ -81,9 +90,26 @@ def _run_generate_check_restart_and_flash() -> bool:
 def index():
     policy = load_policy()
     devices = policy.get("devices", [])
+    groups = list_device_groups()
+    group_map = get_group_name_map()
+
+    role, uname, allowed_gids = _current_scope()
+    if allowed_gids is not None:
+        devices = [d for d in devices if isinstance(d, dict) and device_in_scope(d, allowed_gids)]
+        groups = [g for g in groups if g.get("id") in set(allowed_gids)]
+
+    # enrich for UI
+    for d in devices:
+        if isinstance(d, dict):
+            gid = (d.get("group_id") or "").strip()
+            d["group_id"] = gid
+            d["group_name"] = group_map.get(gid, "-") if gid else "-"
+
     return render_template(
         "devices.html",
         devices=devices,
+        device_groups=groups,
+        is_scoped_admin=(allowed_gids is not None),
         active_page="devices",
     )
 
@@ -95,6 +121,7 @@ def create_device_form():
     vendor = request.form.get("vendor", "")
     site = request.form.get("site", "")
     status = request.form.get("status", "Unknown")
+    group_id = (request.form.get("group_id") or "").strip().lower()
     # UX: "Add Device" should only add to policy.json.
     # Bootstrap is a separate explicit action (safer).
 
@@ -104,6 +131,24 @@ def create_device_form():
 
     if not _is_valid_ipv4(ip):
         flash(f"IP {ip} ไม่ใช่ IPv4 ที่ถูกต้อง", "error")
+        return redirect(url_for("devices.index"))
+
+    role, uname, allowed_gids = _current_scope()
+    if allowed_gids is not None:
+        # admin must be assigned to at least one group
+        if not allowed_gids:
+            flash("บัญชี admin นี้ยังไม่ได้ถูกกำหนด Device Group — กรุณาให้ superadmin กำหนดก่อน", "error")
+            return redirect(url_for("devices.index"))
+        # admin must choose a group and it must be allowed
+        if not group_id:
+            flash("กรุณาเลือก Device Group ก่อนเพิ่มอุปกรณ์", "error")
+            return redirect(url_for("devices.index"))
+        if group_id not in set(allowed_gids):
+            flash("คุณไม่มีสิทธิ์เพิ่มอุปกรณ์ใน group นี้", "error")
+            return redirect(url_for("devices.index"))
+
+    if group_id and not group_exists(group_id):
+        flash("Device Group ไม่ถูกต้อง (ไม่พบใน policy.json)", "error")
         return redirect(url_for("devices.index"))
 
     policy = load_policy()
@@ -118,7 +163,8 @@ def create_device_form():
         "vendor": vendor,
         "ip": ip,
         "site": site,
-        "status": status
+        "status": status,
+        "group_id": group_id,
     })
     policy["devices"] = devices
     save_policy(policy)
@@ -153,6 +199,11 @@ def bootstrap_device_submit(name: str):
     dev = next((d for d in devices if (d.get("name") or "") == name), None)
     if not dev:
         flash(f"ไม่พบ Device {name}", "error")
+        return redirect(url_for("devices.index"))
+
+    role, uname, allowed_gids = _current_scope()
+    if allowed_gids is not None and not device_in_scope(dev, allowed_gids):
+        flash("คุณไม่มีสิทธิ์ Bootstrap อุปกรณ์นี้", "error")
         return redirect(url_for("devices.index"))
 
     ip = (dev.get("ip") or dev.get("address") or "").strip()
@@ -198,6 +249,13 @@ def delete_device_form(name):
     policy = load_policy()
     devices = policy.get("devices", [])
 
+    role, uname, allowed_gids = _current_scope()
+    if allowed_gids is not None:
+        dev = next((d for d in devices if (d.get("name") or "") == name), None)
+        if not dev or not device_in_scope(dev, allowed_gids):
+            flash("คุณไม่มีสิทธิ์ลบอุปกรณ์นี้", "error")
+            return redirect(url_for("devices.index"))
+
     new_devices = [d for d in devices if d.get("name") != name]
     if len(new_devices) == len(devices):
         flash(f"ไม่พบอุปกรณ์ {name}", "error")
@@ -226,10 +284,19 @@ def edit_device_form(name):
         flash(f"ไม่พบ Device {name}", "error")
         return redirect(url_for("devices.index"))
 
+    role, uname, allowed_gids = _current_scope()
+    groups = list_device_groups()
+    if allowed_gids is not None:
+        if not device_in_scope(target, allowed_gids):
+            flash("คุณไม่มีสิทธิ์แก้ไขอุปกรณ์นี้", "error")
+            return redirect(url_for("devices.index"))
+        groups = [g for g in groups if g.get("id") in set(allowed_gids)]
+
     return render_template(
         "device_edit.html",
         active_page="devices",
         device=target,
+        device_groups=groups,
     )
 
 
@@ -241,6 +308,11 @@ def edit_device_submit(name):
     target = next((d for d in devices if (d.get("name") or "") == name), None)
     if not target:
         flash(f"ไม่พบ Device {name}", "error")
+        return redirect(url_for("devices.index"))
+
+    role, uname, allowed_gids = _current_scope()
+    if allowed_gids is not None and not device_in_scope(target, allowed_gids):
+        flash("คุณไม่มีสิทธิ์แก้ไขอุปกรณ์นี้", "error")
         return redirect(url_for("devices.index"))
 
     # --- ✅ rename ได้ ---
@@ -256,13 +328,44 @@ def edit_device_submit(name):
 
         target["name"] = new_name
 
-    # --- อัปเดต field อื่น ๆ ตามเดิมของคุณ (ip/vendor/site/status ฯลฯ) ---
-    # target["ip"] = ...
-    # save_policy(policy)
+    # --- update other fields ---
+    vendor = (request.form.get("vendor") or "").strip()
+    ip = (request.form.get("ip") or "").strip()
+    site = (request.form.get("site") or "").strip()
+    status = (request.form.get("status") or "Unknown").strip() or "Unknown"
+    group_id = (request.form.get("group_id") or "").strip().lower()
+
+    if ip and not _is_valid_ipv4(ip):
+        flash(f"IP {ip} ไม่ใช่ IPv4 ที่ถูกต้อง", "error")
+        return redirect(url_for("devices.edit_device_form", name=name))
+
+    if allowed_gids is not None:
+        if not allowed_gids:
+            flash("บัญชี admin นี้ยังไม่ได้ถูกกำหนด Device Group — กรุณาให้ superadmin กำหนดก่อน", "error")
+            return redirect(url_for("devices.index"))
+        # admin must keep device in allowed groups
+        if not group_id:
+            flash("กรุณาเลือก Device Group", "error")
+            return redirect(url_for("devices.edit_device_form", name=name))
+        if group_id not in set(allowed_gids):
+            flash("คุณไม่มีสิทธิ์ย้ายอุปกรณ์ไป group นี้", "error")
+            return redirect(url_for("devices.edit_device_form", name=name))
+
+    if group_id and not group_exists(group_id):
+        flash("Device Group ไม่ถูกต้อง (ไม่พบใน policy.json)", "error")
+        return redirect(url_for("devices.edit_device_form", name=name))
+
+    target["vendor"] = vendor
+    if ip:
+        target["ip"] = ip
+    target["site"] = site
+    target["status"] = status
+    target["group_id"] = group_id
 
     save_policy(policy)
-    flash(f"บันทึก Device สำเร็จ", "success")
+    flash("บันทึก Device สำเร็จ", "success")
     return redirect(url_for("devices.index"))
+
 
 
 

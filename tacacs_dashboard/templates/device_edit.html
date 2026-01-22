@@ -45,6 +45,19 @@
       </div>
 
       <div class="form-row">
+        <label for="group_id">Device Group</label>
+        {% set current_gid = device.group_id or '' %}
+        <select class="input" id="group_id" name="group_id">
+          <option value="">(none)</option>
+          {% for g in device_groups %}
+            {% set gid = g.id if g.id is defined else g['id'] %}
+            {% set nm = g.name if g.name is defined else g.get('name','') %}
+            <option value="{{ gid }}" {% if gid == current_gid %}selected{% endif %}>{{ nm }} ({{ gid }})</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="form-row">
         <label for="status">Status</label>
         {% set st = device.status or "Unknown" %}
         <select class="input" id="status" name="status">
@@ -63,4 +76,5 @@
 </section>
 
 {% endblock %}
+
 

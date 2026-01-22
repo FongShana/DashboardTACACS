@@ -12,7 +12,12 @@ from ..services.web_users_store import (
     delete_user,
     ensure_bootstrap_admin,
     list_users,
+    get_user_record,
+    get_user_device_group_ids,
+    set_user_device_group_ids,
 )
+
+from ..services.device_groups_store import list_device_groups
 
 bp = Blueprint("auth", __name__)
 
@@ -72,7 +77,7 @@ def web_users():
         flash("หน้านี้สำหรับผู้ดูแลระบบ (superadmin) เท่านั้น", "error")
         return redirect(url_for("dashboard.index"))
     users = list_users()
-    return render_template("web_users.html", users=users, active_page="admin")
+    return render_template("web_users.html", users=users, active_page="admin_users")
 
 
 @bp.post("/admin/web-users/add")
@@ -114,4 +119,65 @@ def web_users_delete():
     else:
         flash(f"ไม่พบบัญชีผู้ใช้: {username}", "error")
     return redirect(url_for("auth.web_users"))
+
+
+@bp.get("/admin/web-users/<username>/device-groups")
+def web_user_device_groups(username: str):
+    if not _is_superadmin():
+        flash("หน้านี้สำหรับผู้ดูแลระบบ (superadmin) เท่านั้น", "error")
+        return redirect(url_for("dashboard.index"))
+
+    rec = get_user_record(username)
+    if not rec:
+        flash(f"ไม่พบบัญชีผู้ใช้: {username}", "error")
+        return redirect(url_for("auth.web_users"))
+
+    target_role = (rec.get("role") or ROLE_ADMIN).strip().lower()
+    groups = list_device_groups()
+    selected = set(get_user_device_group_ids(username))
+
+    return render_template(
+        "admin_user_device_groups.html",
+        target_username=username,
+        target_role=target_role,
+        groups=groups,
+        selected_group_ids=selected,
+        active_page="admin_users",
+    )
+
+
+@bp.post("/admin/web-users/<username>/device-groups")
+def web_user_device_groups_submit(username: str):
+    if not _is_superadmin():
+        flash("หน้านี้สำหรับผู้ดูแลระบบ (superadmin) เท่านั้น", "error")
+        return redirect(url_for("dashboard.index"))
+
+    rec = get_user_record(username)
+    if not rec:
+        flash(f"ไม่พบบัญชีผู้ใช้: {username}", "error")
+        return redirect(url_for("auth.web_users"))
+
+    target_role = (rec.get("role") or ROLE_ADMIN).strip().lower()
+    if target_role == ROLE_SUPERADMIN:
+        flash("บัญชี superadmin เข้าถึงได้ทุก group อยู่แล้ว", "info")
+        return redirect(url_for("auth.web_users"))
+
+    chosen = [(g or "").strip() for g in request.form.getlist("group_ids")]
+    chosen = [g for g in chosen if g]
+
+    # validate against current groups in policy.json
+    existing = {g.get("id") for g in list_device_groups()}
+    bad = [g for g in chosen if g not in existing]
+    if bad:
+        flash(f"มี group ที่ไม่ถูกต้อง: {', '.join(bad)}", "error")
+        return redirect(url_for("auth.web_user_device_groups", username=username))
+
+    try:
+        set_user_device_group_ids(username, chosen)
+        flash(f"บันทึกสิทธิ์ device groups สำหรับ {username} สำเร็จ", "success")
+    except Exception as e:
+        flash(f"บันทึกสิทธิ์ไม่สำเร็จ: {e}", "error")
+
+    return redirect(url_for("auth.web_users"))
+
 

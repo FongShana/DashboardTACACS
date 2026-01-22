@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+
+{% block title %}Device Groups | NT TACACS+ Dashboard{% endblock %}
+{% block header %}Superadmin: Device Groups{% endblock %}
+
+{% block content %}
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="flash-container">
+        {% for category, message in messages %}
+          <div class="flash flash-{{ category }}">{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
+  <section class="section">
+    <div class="form-card">
+      <div class="form-title">Create / Update Device Group (Superadmin only)</div>
+      <form method="post" action="{{ url_for('device_groups.add_group') }}">
+        <div class="form-grid">
+          <div class="form-row">
+            <label>Group ID</label>
+            <input class="input" name="group_id" placeholder="e.g. bkk-core" required>
+            <div class="hint">ใช้ตัวเล็ก a-z 0-9 _ - (2–32 ตัว)</div>
+          </div>
+          <div class="form-row">
+            <label>Display Name</label>
+            <input class="input" name="name" placeholder="เช่น BKK Core">
+          </div>
+        </div>
+        <button class="btn btn-primary" type="submit">Save Group</button>
+      </form>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2 class="section-title">Existing Device Groups</h2>
+    <div class="table-wrapper">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Group ID</th>
+            <th>Name</th>
+            <th>Devices</th>
+            <th class="actions">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for g in groups %}
+            {% set gid = g.id if g.id is defined else g['id'] %}
+            {% set nm = g.name if g.name is defined else g.get('name','') %}
+            <tr>
+              <td class="text-mono">{{ gid }}</td>
+              <td>{{ nm }}</td>
+              <td class="text-mono">{{ counts.get(gid, 0) }}</td>
+              <td class="actions">
+                <form method="post" action="{{ url_for('device_groups.delete_group') }}" style="display:inline">
+                  <input type="hidden" name="group_id" value="{{ gid }}">
+                  <button class="btn btn-danger btn-sm" type="submit"
+                          onclick="return confirm('Delete group: {{ gid }} ? (ต้องไม่มี device อยู่ใน group นี้)');">
+                    Delete
+                  </button>
+                </form>
+              </td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="4">ยังไม่มี group</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="hint" style="margin-top:0.75rem;">
+      หลังสร้าง group แล้ว ให้ไปที่ <b>Superadmin: Web Accounts</b> เพื่อกำหนดว่า web admin คนไหนดูแล group ไหน
+    </div>
+  </section>
+{% endblock %}

@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block title %}Assign Device Groups | NT TACACS+ Dashboard{% endblock %}
+{% block header %}Superadmin: Assign Device Groups{% endblock %}
+
+{% block content %}
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="flash-container">
+        {% for category, message in messages %}
+          <div class="flash flash-{{ category }}">{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
+  <section class="section">
+    <div class="form-card">
+      <div class="form-title">Assign device groups for web user: <span class="text-mono">{{ target_username }}</span></div>
+
+      {% if target_role == 'superadmin' %}
+        <div class="hint">บัญชี superadmin เข้าถึงได้ทุก group อยู่แล้ว (ไม่ต้องกำหนด)</div>
+        <a href="{{ url_for('auth.web_users') }}" class="btn btn-secondary" style="margin-top:0.75rem;">Back</a>
+      {% else %}
+        <form method="post">
+          <div class="hint">เลือก group ที่บัญชีนี้สามารถดูแล Devices/OLT ได้</div>
+
+          <div style="margin-top:0.75rem;">
+            {% for g in groups %}
+              {% set gid = g.id if g.id is defined else g['id'] %}
+              {% set nm = g.name if g.name is defined else g.get('name','') %}
+              <label class="inline-check" style="display:flex; gap:0.5rem; align-items:center; margin:0.35rem 0;">
+                <input type="checkbox" name="group_ids" value="{{ gid }}"
+                       {% if gid in selected_group_ids %}checked{% endif %}>
+                <span><b>{{ nm }}</b> <span class="text-mono">({{ gid }})</span></span>
+              </label>
+            {% else %}
+              <div class="hint">ยังไม่มี device group — ไปสร้างได้ที่ <b>Superadmin: Device Groups</b></div>
+            {% endfor %}
+          </div>
+
+          <div style="display:flex; gap:0.75rem; margin-top:0.75rem;">
+            <button class="btn btn-primary" type="submit"
+                    onclick="return confirm('Save device group access for {{ target_username }} ?');">
+              Save
+            </button>
+            <a href="{{ url_for('auth.web_users') }}" class="btn btn-secondary">Cancel</a>
+          </div>
+
+          <div class="hint" style="margin-top:0.75rem;">
+            หมายเหตุ: ถ้าไม่เลือก group เลย = admin จะไม่เห็น/จัดการ device ใด ๆ
+          </div>
+        </form>
+      {% endif %}
+    </div>
+  </section>
+{% endblock %}

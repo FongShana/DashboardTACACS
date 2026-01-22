@@ -42,6 +42,23 @@
     </div>
 
     <div class="form-row">
+      <label for="dev_group">Device Group</label>
+      <select class="input" id="dev_group" name="group_id" {% if is_scoped_admin %}required{% endif %}>
+        {% if not is_scoped_admin %}
+          <option value="">(none)</option>
+        {% endif %}
+        {% for g in device_groups %}
+          <option value="{{ g.id if g.id is defined else g['id'] }}">
+            {{ g.name if g.name is defined else g.get('name','') }} ({{ g.id if g.id is defined else g['id'] }})
+          </option>
+        {% endfor %}
+      </select>
+      {% if is_scoped_admin and (device_groups|length) == 0 %}
+        <div class="hint">บัญชี admin นี้ยังไม่ได้ถูกกำหนด Device Group — กรุณาให้ superadmin กำหนดก่อน</div>
+      {% endif %}
+    </div>
+
+    <div class="form-row">
       <label for="dev_status">Status</label>
       <select class="input" id="dev_status" name="status">
         <option value="Online">Online</option>
@@ -79,6 +96,7 @@
           <th>Vendor</th>
           <th>IP</th>
           <th>Site</th>
+          <th>Group</th>
           <th>Status</th>
           <th>Actions</th>
         </tr>
@@ -90,6 +108,7 @@
           <td>{{ d.vendor }}</td>
           <td>{{ d.ip }}</td>
           <td>{{ d.site }}</td>
+          <td>{{ d.group_name if d.group_name is defined else '-' }}</td>
           <td>{{ d.status }}</td>
           <td class="actions">
             <a href="{{ url_for('devices.edit_device_form', name=d.name) }}"
@@ -125,7 +144,7 @@
         </tr>
         {% else %}
         <tr>
-          <td colspan="6">ยังไม่มีอุปกรณ์ในระบบ</td>
+          <td colspan="7">ยังไม่มีอุปกรณ์ในระบบ</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -134,6 +153,7 @@
 </section>
 
 {% endblock %}
+
 
 
 

@@ -109,6 +109,72 @@ def list_users() -> List[Dict[str, Any]]:
 
     return sorted(users, key=key)
 
+def get_user_record(username: str) -> Optional[Dict[str, Any]]:
+    """Return the raw user record (including extra fields) from web_users.json."""
+    ensure_bootstrap_admin()
+    username = (username or "").strip()
+    if not username:
+        return None
+    data = load_web_users()
+    for u in (data.get("users") or []):
+        if (u.get("username") or "").strip() == username:
+            return u
+    return None
+
+
+def get_user_device_group_ids(username: str) -> List[str]:
+    """Return list of device group ids assigned to this web user.
+
+    - For superadmin: returns [] (not used; superadmin has full access)
+    - For admin: returns stored list (may be empty)
+    """
+    u = get_user_record(username) or {}
+    role = (u.get("role") or ROLE_ADMIN).strip().lower()
+    if role == ROLE_SUPERADMIN:
+        return []
+    gids = u.get("device_group_ids")
+    if not isinstance(gids, list):
+        return []
+    out: List[str] = []
+    for g in gids:
+        g = (str(g) or "").strip()
+        if g and g not in out:
+            out.append(g)
+    return out
+
+
+def set_user_device_group_ids(username: str, group_ids: List[str]) -> None:
+    """Set device group access for a given web user (admin)."""
+    ensure_bootstrap_admin()
+    username = (username or "").strip()
+    if not username:
+        raise ValueError("username is required")
+
+    data = load_web_users()
+    users = data.get("users") or []
+    target = None
+    for u in users:
+        if (u.get("username") or "").strip() == username:
+            target = u
+            break
+    if not target:
+        raise ValueError("user not found")
+
+    role = (target.get("role") or ROLE_ADMIN).strip().lower()
+    if role == ROLE_SUPERADMIN:
+        target.pop("device_group_ids", None)
+        save_web_users(data)
+        return
+
+    norm: List[str] = []
+    for g in (group_ids or []):
+        g = (str(g) or "").strip()
+        if g and g not in norm:
+            norm.append(g)
+    target["device_group_ids"] = norm
+    save_web_users(data)
+
+
 def add_user(username: str, password: str, role: str = ROLE_ADMIN) -> None:
     ensure_bootstrap_admin()
     username = (username or "").strip()
