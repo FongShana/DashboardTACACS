@@ -119,7 +119,6 @@ def create_device_form():
     name = request.form.get("name")
     ip = request.form.get("ip")
     vendor = request.form.get("vendor", "")
-    site = request.form.get("site", "")
     status = request.form.get("status", "Unknown")
     group_id = (request.form.get("group_id") or "").strip().lower()
     # UX: "Add Device" should only add to policy.json.
@@ -162,7 +161,6 @@ def create_device_form():
         "name": name,
         "vendor": vendor,
         "ip": ip,
-        "site": site,
         "status": status,
         "group_id": group_id,
     })
@@ -331,7 +329,6 @@ def edit_device_submit(name):
     # --- update other fields ---
     vendor = (request.form.get("vendor") or "").strip()
     ip = (request.form.get("ip") or "").strip()
-    site = (request.form.get("site") or "").strip()
     status = (request.form.get("status") or "Unknown").strip() or "Unknown"
     group_id = (request.form.get("group_id") or "").strip().lower()
 
@@ -358,7 +355,6 @@ def edit_device_submit(name):
     target["vendor"] = vendor
     if ip:
         target["ip"] = ip
-    target["site"] = site
     target["status"] = status
     target["group_id"] = group_id
 

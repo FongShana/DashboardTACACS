@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from .tacacs_config import _read_env
 from .olt_telnet import telnet_exec_commands
+from .policy_store import is_reserved_olt_username
 
 def build_provision_commands(username: str, role: str) -> list[str]:
     cmds: list[str] = [
@@ -33,6 +34,9 @@ def provision_user_on_olt(
 
     if not admin_pass:
         raise RuntimeError("OLT_ADMIN_PASSWORD not set in secret.env")
+
+    if is_reserved_olt_username(username) or (username or '').strip().lower() == (admin_user or '').strip().lower():
+        raise RuntimeError(f"Refusing to provision reserved username '{username}' on OLT")
 
     cmds = build_provision_commands(username=username, role=role)
     if save:

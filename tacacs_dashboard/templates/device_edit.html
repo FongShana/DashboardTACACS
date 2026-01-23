@@ -37,13 +37,6 @@
         <input class="input" id="ip" type="text" name="ip"
                value="{{ device.ip or '' }}" placeholder="10.x.x.x">
       </div>
-
-      <div class="form-row">
-        <label for="site">Site</label>
-        <input class="input" id="site" type="text" name="site"
-               value="{{ device.site or '' }}" placeholder="BTG / WURC / LAB ฯลฯ">
-      </div>
-
       <div class="form-row">
         <label for="group_id">Device Group</label>
         {% set current_gid = device.group_id or '' %}

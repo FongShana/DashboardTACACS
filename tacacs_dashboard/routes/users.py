@@ -13,6 +13,7 @@ from tacacs_dashboard.services.policy_store import (
     save_policy,
     upsert_user,
     delete_user,
+    is_reserved_olt_username,
 )
 from tacacs_dashboard.services.tacacs_config import _read_env
 from tacacs_dashboard.services.tacacs_apply import generate_config_file, check_config_syntax
@@ -255,6 +256,10 @@ def create_user_form():
 
     if not re.match(r"^[A-Za-z0-9][A-Za-z0-9_-]{2,31}$", username):
         flash("Username ต้องยาว 3–32 ตัว และใช้ได้เฉพาะ A-Z a-z 0-9 _ -", "error")
+        return redirect(url_for("users.index"))
+
+    if is_reserved_olt_username(username):
+        flash(f"ไม่อนุญาตให้ใช้ Username '{username}' (ถูกสงวนไว้/อาจชนกับ local user บน OLT)", "error")
         return redirect(url_for("users.index"))
 
     policy = load_policy()

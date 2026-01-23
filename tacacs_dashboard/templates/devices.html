@@ -34,13 +34,6 @@
       <label for="dev_ip">IP Address</label>
       <input class="input" id="dev_ip" type="text" name="ip" placeholder="10.x.x.x" required>
     </div>
-
-    <div class="form-row">
-      <label for="dev_site">Site</label>
-      <input class="input" id="dev_site" type="text" name="site"
-             placeholder="BTG / SITE-A / LAB ฯลฯ">
-    </div>
-
     <div class="form-row">
       <label for="dev_group">Device Group</label>
       <select class="input" id="dev_group" name="group_id" {% if is_scoped_admin %}required{% endif %}>
@@ -95,7 +88,6 @@
           <th>Name</th>
           <th>Vendor</th>
           <th>IP</th>
-          <th>Site</th>
           <th>Group</th>
           <th>Status</th>
           <th>Actions</th>
@@ -107,7 +99,6 @@
           <td>{{ d.name }}</td>
           <td>{{ d.vendor }}</td>
           <td>{{ d.ip }}</td>
-          <td>{{ d.site }}</td>
           <td>{{ d.group_name if d.group_name is defined else '-' }}</td>
           <td>{{ d.status }}</td>
           <td class="actions">
@@ -144,7 +135,7 @@
         </tr>
         {% else %}
         <tr>
-          <td colspan="7">ยังไม่มีอุปกรณ์ในระบบ</td>
+          <td colspan="6">ยังไม่มีอุปกรณ์ในระบบ</td>
         </tr>
         {% endfor %}
       </tbody>

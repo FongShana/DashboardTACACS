@@ -7,6 +7,11 @@ from typing import Any, Dict
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 POLICY_PATH = BASE_DIR / "policy.json"
 
+RESERVED_OLT_USERNAMES = {"zte"}
+
+def is_reserved_olt_username(username: str) -> bool:
+    return (username or "").strip().lower() in RESERVED_OLT_USERNAMES
+
 
 def load_policy() -> Dict[str, Any]:
     # กันกรณีไฟล์ยังไม่ถูกสร้าง
@@ -49,6 +54,10 @@ def upsert_user(username: str, role: str, status: str = "Active") -> bool:
 
     policy = load_policy()
     users = policy.setdefault("users", [])
+
+    exists = any((u.get("username") or "").strip() == username for u in users)
+    if (not exists) and is_reserved_olt_username(username):
+        raise ValueError(f"username '{username}' is reserved")
 
     for u in users:
         if (u.get("username") or "").strip() == username:
