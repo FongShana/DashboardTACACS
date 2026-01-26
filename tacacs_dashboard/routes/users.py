@@ -252,6 +252,46 @@ def _maybe_deprovision_from_olts(username: str, device_group_ids=None) -> None:
             flash(f"Deprovision '{username}' -> OLT {ip} ล้มเหลว: {e}", "error")
 
 
+def _maybe_deprovision_specific_ips(username: str, ips: list[str]) -> None:
+    """Deprovision a user from a specific list of OLT IPs.
+
+    Used when superadmin narrows a user's device-group scope and wants to remove
+    the user's local stub from OLTs that are now out-of-scope.
+    Guarded by OLT_AUTO_DEPROVISION.
+    """
+    if not ips:
+        return
+
+    auto = (_read_env("OLT_AUTO_DEPROVISION", "0") or "0").strip().lower()
+    if auto not in ("1", "true", "yes"):
+        return
+
+    auto_write = (_read_env("OLT_AUTO_WRITE", "0") or "0").strip().lower()
+    save = auto_write in ("1", "true", "yes")
+
+    uniq: list[str] = []
+    for ip in ips:
+        ip2 = (ip or "").strip()
+        if ip2 and ip2 not in uniq:
+            uniq.append(ip2)
+
+    for ip in uniq:
+        try:
+            out = deprovision_user_on_olt(
+                ip,
+                username=username,
+                save=save,
+                dry_run=False,
+            )
+            msg = _olt_job_summary(out, ip)
+            flash(
+                f"Deprovision (out-of-scope) '{username}' -> OLT {ip} สำเร็จ (save={'ON' if save else 'OFF'}): {msg}",
+                "success",
+            )
+        except Exception as e:
+            flash(f"Deprovision (out-of-scope) '{username}' -> OLT {ip} ล้มเหลว: {e}", "error")
+
+
 # -----------------------
 # Pages
 # -----------------------

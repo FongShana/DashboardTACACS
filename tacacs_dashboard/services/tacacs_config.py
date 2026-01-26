@@ -76,8 +76,6 @@ def _user_profile_lines(role_name: str, priv: int) -> list[str]:
     lines.append('        if (cmd == "") permit')  # required for shell startup :contentReference[oaicite:3]{index=3}
 
     if role == "OLT_VIEW":
-        # OLT มัก normalize "conf t" -> "configure terminal" :contentReference[oaicite:4]{index=4}
-        lines.append(r'        if (cmd =~ /^configure\s+terminal(\s|$)/) deny')
         # กันเผื่อบางกรณีที่ส่งมาแค่ "configure" (ไม่ค่อยเจอ แต่ใส่ไว้ได้)
         lines.append(r'        if (cmd =~ /^configure(\s|$)/) deny')
 
