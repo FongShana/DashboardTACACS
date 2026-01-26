@@ -41,6 +41,32 @@
     </div>
   </div>
 
+  {% if is_superadmin %}
+    <div class="form-row" style="margin-top:0.25rem;">
+      <label>Device Groups (Scope)</label>
+      <div class="hint">เลือก Device Group ที่ user นี้ใช้งานได้ (ถ้าไม่เลือกและ/หรือเลือก Unscoped = ใช้ได้ทุก OLT)</div>
+
+      <label class="inline-check" style="display:flex; gap:0.5rem; align-items:center; margin:0.35rem 0;">
+        <input type="checkbox" name="unscoped" value="1" checked>
+        <span><b>Unscoped</b> <span class="hint" style="display:inline;">(All OLTs)</span></span>
+      </label>
+
+      <div style="margin-top:0.5rem;">
+        {% for g in device_groups %}
+          {% set gid = g.id if g.id is defined else g['id'] %}
+          {% set nm = g.name if g.name is defined else g.get('name','') %}
+          <label class="inline-check" style="display:flex; gap:0.5rem; align-items:center; margin:0.25rem 0;">
+            <input type="checkbox" name="device_group_ids" value="{{ gid }}">
+            <span><b>{{ nm }}</b> <span class="text-mono">({{ gid }})</span></span>
+          </label>
+        {% else %}
+          <div class="hint">ยังไม่มี device group — ไปสร้างได้ที่ <b>Superadmin: Device Groups</b></div>
+        {% endfor %}
+      </div>
+      <div class="hint" style="margin-top:0.35rem;">หมายเหตุ: ถ้ายกเลิก Unscoped แล้วไม่เลือก group เลย ระบบจะไม่ให้บันทึก</div>
+    </div>
+  {% endif %}
+
     <div class="form-row">
       <label for="password">Password</label>
       <input class="input" id="password" type="password" name="password"
@@ -75,6 +101,7 @@
           <th>Username</th>
           <th>Roles</th>
           <th>Status</th>
+          {% if is_superadmin %}<th>Device Group</th>{% endif %}
           <th>Last Login</th>
           <th>Actions</th>
         </tr>
@@ -85,6 +112,7 @@
           <td>{{ user.username }}</td>
           <td>{{ user.roles }}</td>
           <td>{{ user.status }}</td>
+          {% if is_superadmin %}<td>{{ user.device_groups_label or "All (unscoped)" }}</td>{% endif %}
           <td>{{ user.last_login }}</td>
           <td>
             <a href="{{ url_for('users.edit_user_form', username=user.username) }}"
@@ -105,7 +133,7 @@
         </tr>
         {% else %}
         <tr>
-          <td colspan="5">ยังไม่มีผู้ใช้ในระบบ</td>
+          <td colspan="{% if is_superadmin %}6{% else %}5{% endif %}">ยังไม่มีผู้ใช้ในระบบ</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -155,4 +183,5 @@
 </section>
 
 {% endblock %}
+
 

@@ -261,8 +261,21 @@ def index():
     users = policy.get("users", [])
     roles = policy.get("roles", [])
 
+    device_groups = policy.get("device_groups", []) or []
+    # map group_id -> display name
+    group_name_map = {}
+    for g in device_groups:
+        if not isinstance(g, dict):
+            continue
+        gid = (g.get("id") or g.get("group_id") or "").strip().lower()
+        if not gid:
+            continue
+        nm = (g.get("name") or "").strip()
+        group_name_map[gid] = nm
+
     # Scope admin view to device groups (users without device_group_ids are treated as out of scope)
     _role, _web_uname, allowed_gids = _current_scope()
+    is_superadmin = (_role == "superadmin")
     if allowed_gids is not None:
         if not allowed_gids:
             flash("บัญชี admin นี้ยังไม่ได้ถูกกำหนด Device Group — กรุณาให้ superadmin กำหนดก่อน", "warning")
@@ -291,10 +304,28 @@ def index():
             u["last_login"] = u.get("last_login") or "-"
 
 
+    
+    # For UI: show device group labels (superadmin view)
+    if is_superadmin:
+        for u in users:
+            if not isinstance(u, dict):
+                continue
+            ugids = _normalize_gid_list(u.get("device_group_ids"))
+            if not ugids:
+                u["device_groups_label"] = "All (unscoped)"
+            else:
+                parts = []
+                for gid in ugids:
+                    nm = group_name_map.get(gid) or ""
+                    parts.append(f"{nm} ({gid})" if nm else gid)
+                u["device_groups_label"] = ", ".join(parts)
+
     return render_template(
         "users.html",
         users=users,
         roles=roles,
+        device_groups=device_groups,
+        is_superadmin=is_superadmin,
         active_page="users",
     )
 
@@ -324,12 +355,41 @@ def create_user_form():
 
     # ✅ Scope: admin สามารถสร้าง user ได้เฉพาะใน OLT ที่อยู่ใน Device Group ของตัวเองเท่านั้น
     _role, _web_uname, allowed_gids = _current_scope()
+    is_superadmin = (_role == "superadmin")
+
+    # device group scoping for TACACS users:
+    # - admin: forced to their own allowed_gids
+    # - superadmin: can optionally set device_group_ids (empty/unscoped = all OLTs)
     device_group_ids = None
+
     if allowed_gids is not None:
+        # web admin
         if not allowed_gids:
             flash("บัญชี admin นี้ยังไม่ได้ถูกกำหนด Device Group — กรุณาให้ superadmin กำหนดก่อน", "error")
             return redirect(url_for("users.index"))
         device_group_ids = allowed_gids
+    else:
+        # superadmin (optional selection from form)
+        unscoped = (request.form.get("unscoped") or "").strip().lower() in ("1", "true", "yes", "on")
+        selected = _normalize_gid_list(request.form.getlist("device_group_ids"))
+
+        if not unscoped and not selected:
+            flash("กรุณาเลือก Device Group อย่างน้อย 1 กลุ่ม หรือเลือก Unscoped", "error")
+            return redirect(url_for("users.index"))
+
+        if not unscoped and selected:
+            # validate against existing device groups
+            valid_set = set()
+            for g in (load_policy().get("device_groups") or []):
+                if isinstance(g, dict):
+                    gid = (g.get("id") or g.get("group_id") or "").strip().lower()
+                    if gid:
+                        valid_set.add(gid)
+            selected = [g for g in selected if g in valid_set] if valid_set else selected
+            if not selected:
+                flash("กรุณาเลือก Device Group อย่างน้อย 1 กลุ่ม หรือเลือก Unscoped", "error")
+                return redirect(url_for("users.index"))
+            device_group_ids = selected
 
     policy = load_policy()
     users = policy.get("users", [])
@@ -408,6 +468,8 @@ def edit_user_form(username):
     users = policy.get("users", [])
     roles = policy.get("roles", [])
 
+    device_groups = policy.get("device_groups", []) or []
+
     target = None
     for u in users:
         if isinstance(u, dict) and (u.get("username") or "").strip() == (username or "").strip():
@@ -420,17 +482,22 @@ def edit_user_form(username):
 
     # ✅ Scope check: admin แก้ไขได้เฉพาะ user ใน Device Group ของตัวเอง
     _role, _web_uname, allowed_gids = _current_scope()
+    is_superadmin = (_role == "superadmin")
     if allowed_gids is not None and not _user_in_scope(target, allowed_gids):
         flash("คุณไม่มีสิทธิ์แก้ไขผู้ใช้นี้ (อยู่นอก Device Group ของคุณ)", "error")
         return redirect(url_for("users.index"))
 
     current_role = target.get("roles") or target.get("role") or ""
+    selected_device_group_ids = _normalize_gid_list(target.get("device_group_ids"))
 
     return render_template(
         "user_edit.html",
         active_page="users",
         user=target,
         roles=roles,
+        device_groups=device_groups,
+        selected_device_group_ids=selected_device_group_ids,
+        is_superadmin=is_superadmin,
         current_role=current_role,
     )
 
@@ -467,13 +534,41 @@ def edit_user_submit(username):
 
     # ✅ Scope check (admin)
     _role, _web_uname, allowed_gids = _current_scope()
+    is_superadmin = (_role == "superadmin")
+
+    # device_group_ids update:
+    # - admin: cannot change scope; if user is unscoped, it will be scoped to admin's groups on first edit
+    # - superadmin: can assign/clear device_group_ids from Edit UI
     device_group_ids_to_set = None
+
     if allowed_gids is not None:
+        # web admin scope check
         if not _user_in_scope(target, allowed_gids):
             flash("คุณไม่มีสิทธิ์แก้ไขผู้ใช้นี้ (อยู่นอก Device Group ของคุณ)", "error")
             return redirect(url_for("users.index"))
         # หาก user ยังไม่เคยถูก scope (ไม่มี device_group_ids) ให้ยึดตาม group ของ admin ปัจจุบัน
         device_group_ids_to_set = existing_gids or allowed_gids
+    else:
+        # superadmin: read from form
+        unscoped = (request.form.get("unscoped") or "").strip().lower() in ("1", "true", "yes", "on")
+        selected = _normalize_gid_list(request.form.getlist("device_group_ids"))
+
+        if unscoped:
+            device_group_ids_to_set = []  # clear => unscoped
+        else:
+            # validate group ids exist
+            valid_set = set()
+            for g in (policy.get("device_groups") or []):
+                if isinstance(g, dict):
+                    gid = (g.get("id") or g.get("group_id") or "").strip().lower()
+                    if gid:
+                        valid_set.add(gid)
+            selected = [g for g in selected if g in valid_set] if valid_set else selected
+
+            if not selected:
+                flash("กรุณาเลือก Device Group อย่างน้อย 1 กลุ่ม หรือเลือก Unscoped", "error")
+                return redirect(url_for("users.edit_user_form", username=username))
+            device_group_ids_to_set = selected
 
     role_names = {r.get("name") for r in roles if r.get("name")}
     if role_names and new_role and new_role not in role_names:
@@ -485,6 +580,19 @@ def edit_user_submit(username):
 
     ok = _run_generate_check_restart_and_flash()
     if ok:
+        # If superadmin changed scoping to be narrower, optionally deprovision from out-of-scope OLTs
+        if allowed_gids is None and device_group_ids_to_set is not None:
+            new_gids = _normalize_gid_list(device_group_ids_to_set)
+            old_gids = existing_gids
+
+            # only when new scope is explicitly set (non-empty) -> remove access from outside
+            if new_gids:
+                all_ips = _get_olt_ip_list(policy, allowed_group_ids=None if not old_gids else old_gids)
+                in_scope_ips = _get_olt_ip_list(policy, allowed_group_ids=new_gids)
+
+                out_scope = [ip for ip in all_ips if ip not in set(in_scope_ips)]
+                _maybe_deprovision_specific_ips(username, out_scope)
+
         provision_gids = device_group_ids_to_set if device_group_ids_to_set is not None else existing_gids
         _maybe_provision_to_olts(username=username, role=new_role, status=new_status, device_group_ids=provision_gids if provision_gids else None)
 

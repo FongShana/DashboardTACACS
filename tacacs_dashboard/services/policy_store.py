@@ -73,13 +73,19 @@ def upsert_user(
             if gg and gg not in gids:
                 gids.append(gg)
 
+    # If explicitly provided but empty => treat as 'unscoped' (remove key)
+    clear_device_groups = (gids is not None and len(gids) == 0)
+
     for u in users:
         if (u.get("username") or "").strip() == username:
             u["roles"] = role      # ใช้ key 'roles' ตาม policy ของคุณ
             u["status"] = status
             u.setdefault("last_login", "-")
             if gids is not None:
-                u["device_group_ids"] = gids
+                if clear_device_groups:
+                    u.pop("device_group_ids", None)
+                else:
+                    u["device_group_ids"] = gids
             save_policy(policy)
             return False
 
@@ -89,7 +95,7 @@ def upsert_user(
         "status": status,
         "last_login": "-",
     }
-    if gids is not None:
+    if gids is not None and not clear_device_groups:
         rec["device_group_ids"] = gids
 
     users.append(rec)

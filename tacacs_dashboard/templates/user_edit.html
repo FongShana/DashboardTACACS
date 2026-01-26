@@ -48,6 +48,34 @@
       </div>
     </div>
 
+    {% if is_superadmin %}
+    <div class="form-row" style="margin-top:0.25rem;">
+      <label>Device Groups (Scope)</label>
+      <div class="hint">กำหนดว่า user นี้สามารถใช้งานได้เฉพาะ OLT ใน group ไหน (ถ้าเลือก Unscoped = ใช้ได้ทุก OLT)</div>
+
+      <label class="inline-check" style="display:flex; gap:0.5rem; align-items:center; margin:0.35rem 0;">
+        <input type="checkbox" name="unscoped" value="1"
+               {% if selected_device_group_ids|length == 0 %}checked{% endif %}>
+        <span><b>Unscoped</b> <span class="hint" style="display:inline;">(All OLTs)</span></span>
+      </label>
+
+      <div style="margin-top:0.5rem;">
+        {% for g in device_groups %}
+          {% set gid = g.id if g.id is defined else g['id'] %}
+          {% set nm = g.name if g.name is defined else g.get('name','') %}
+          <label class="inline-check" style="display:flex; gap:0.5rem; align-items:center; margin:0.25rem 0;">
+            <input type="checkbox" name="device_group_ids" value="{{ gid }}"
+                   {% if gid in selected_device_group_ids %}checked{% endif %}>
+            <span><b>{{ nm }}</b> <span class="text-mono">({{ gid }})</span></span>
+          </label>
+        {% else %}
+          <div class="hint">ยังไม่มี device group — ไปสร้างได้ที่ <b>Superadmin: Device Groups</b></div>
+        {% endfor %}
+      </div>
+      <div class="hint" style="margin-top:0.35rem;">หมายเหตุ: ถ้ายกเลิก Unscoped แล้วไม่เลือก group เลย ระบบจะไม่ให้บันทึก</div>
+    </div>
+    {% endif %}
+
     <div class="form-row">
       <label for="password">New Password (เว้นว่าง = ไม่เปลี่ยน)</label>
       <input class="input" id="password" type="password" name="password"
@@ -63,3 +91,4 @@
 </section>
 
 {% endblock %}
+
