@@ -176,12 +176,10 @@ def build_config_text() -> str:
     lines.append(f"  log authclog {{ destination = {LOG_DIR}/authc-%Y-%m-%d.log }}")
     lines.append(f"  log authzlog {{ destination = {LOG_DIR}/authz-%Y-%m-%d.log }}")
     lines.append(f"  log acctlog  {{ destination = {LOG_DIR}/acct-%Y-%m-%d.log }}")
-    lines.append(f"  log connlog  {{ destination = {LOG_DIR}/conn-%Y-%m-%d.log }}")
     lines.append("")
     lines.append("  authentication log = authclog")
     lines.append("  authorization log = authzlog")
     lines.append("  accounting log = acctlog")
-    lines.append("  connection log = connlog")
     lines.append("")
 
     # Devices -> host
