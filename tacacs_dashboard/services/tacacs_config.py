@@ -190,8 +190,6 @@ def build_config_text() -> str:
         lines.append(f"  host = {name} {{")
         lines.append(f"    address = {addr}")
         lines.append(f'    key = "{_escape(shared_key)}"')
-        if enable15:
-            lines.append(f'    enable 15 = clear "{_escape(enable15)}"')
         lines.append("  }")
         lines.append("")
 
