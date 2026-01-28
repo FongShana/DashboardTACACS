@@ -20,6 +20,14 @@
       <form method="post" action="{{ url_for('auth.web_users_add') }}">
         <div class="form-grid">
           <div class="form-row">
+            <label>First name</label>
+            <input class="input" name="first_name" placeholder="e.g. Somchai">
+          </div>
+          <div class="form-row">
+            <label>Last name</label>
+            <input class="input" name="last_name" placeholder="e.g. Srisuk">
+          </div>
+          <div class="form-row">
             <label>Username</label>
             <input class="input" name="username" placeholder="e.g. noc01" required>
           </div>
@@ -47,6 +55,7 @@
       <table class="table">
         <thead>
           <tr>
+            <th>Name</th>
             <th>Username</th>
             <th>Role</th>
             <th>Created</th>
@@ -58,6 +67,10 @@
           {% for u in users %}
             <tr>
               {% set uname = u.username if u.username is defined else u['username'] %}
+              {% set fn = u.first_name if u.first_name is defined else u.get('first_name','') %}
+              {% set ln = u.last_name if u.last_name is defined else u.get('last_name','') %}
+              {% set fullname = (fn ~ ' ' ~ ln).strip() %}
+              <td>{{ fullname if fullname else '-' }}</td>
               <td class="text-mono">{{ uname }}</td>
               <td>
                 {% set r = u.role if u.role is defined else u['role'] %}
@@ -80,6 +93,7 @@
                 {% endif %}
               </td>
               <td class="actions">
+                <a class="btn btn-secondary btn-sm" style="margin-right:0.5rem;" href="{{ url_for('auth.web_user_edit', username=uname) }}">Edit Name</a>
                 {% if uname != current_user %}
                   <form method="post" action="{{ url_for('auth.web_users_delete') }}" style="display:inline">
                     <input type="hidden" name="username" value="{{ uname }}">

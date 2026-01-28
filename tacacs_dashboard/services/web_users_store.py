@@ -109,6 +109,7 @@ def list_users() -> List[Dict[str, Any]]:
 
     return sorted(users, key=key)
 
+
 def get_user_record(username: str) -> Optional[Dict[str, Any]]:
     """Return the raw user record (including extra fields) from web_users.json."""
     ensure_bootstrap_admin()
@@ -135,6 +136,7 @@ def get_user_device_group_ids(username: str) -> List[str]:
     gids = u.get("device_group_ids")
     if not isinstance(gids, list):
         return []
+    # normalize
     out: List[str] = []
     for g in gids:
         g = (str(g) or "").strip()
@@ -144,7 +146,10 @@ def get_user_device_group_ids(username: str) -> List[str]:
 
 
 def set_user_device_group_ids(username: str, group_ids: List[str]) -> None:
-    """Set device group access for a given web user (admin)."""
+    """Set device group access for a given web user (admin).
+
+    Note: This does NOT validate group_ids against policy.json; caller should validate.
+    """
     ensure_bootstrap_admin()
     username = (username or "").strip()
     if not username:
@@ -162,6 +167,7 @@ def set_user_device_group_ids(username: str, group_ids: List[str]) -> None:
 
     role = (target.get("role") or ROLE_ADMIN).strip().lower()
     if role == ROLE_SUPERADMIN:
+        # superadmin always has full access; don't store group restrictions
         target.pop("device_group_ids", None)
         save_web_users(data)
         return
@@ -174,8 +180,13 @@ def set_user_device_group_ids(username: str, group_ids: List[str]) -> None:
     target["device_group_ids"] = norm
     save_web_users(data)
 
-
-def add_user(username: str, password: str, role: str = ROLE_ADMIN) -> None:
+def add_user(
+    username: str,
+    password: str,
+    role: str = ROLE_ADMIN,
+    first_name: str = "",
+    last_name: str = "",
+) -> None:
     ensure_bootstrap_admin()
     username = (username or "").strip()
     if not username:
@@ -192,15 +203,60 @@ def add_user(username: str, password: str, role: str = ROLE_ADMIN) -> None:
     if any((u.get("username") or "").strip() == username for u in users):
         raise ValueError("username already exists")
 
-    users.append(
-        {
-            "username": username,
-            "role": role,
-            "password_hash": generate_password_hash(password),
-            "created_at": _now_iso(),
-        }
-    )
+    rec: Dict[str, Any] = {
+        "username": username,
+        "role": role,
+        "password_hash": generate_password_hash(password),
+        "created_at": _now_iso(),
+    }
+
+    # Optional profile fields (do not affect auth)
+    fn = (first_name or "").strip()
+    ln = (last_name or "").strip()
+    if fn:
+        rec["first_name"] = fn
+    if ln:
+        rec["last_name"] = ln
+    if role == ROLE_ADMIN:
+        # group restrictions are optional; default empty means "no device access" until assigned
+        rec["device_group_ids"] = []
+
+    users.append(rec)
     data["users"] = users
+    save_web_users(data)
+
+
+def set_user_name(username: str, first_name: str = "", last_name: str = "") -> None:
+    """Update optional first/last name fields for a web account.
+
+    This intentionally does NOT change username/role/password_hash.
+    """
+    ensure_bootstrap_admin()
+    username = (username or "").strip()
+    if not username:
+        raise ValueError("username is required")
+
+    data = load_web_users()
+    users = data.get("users") or []
+    target = None
+    for u in users:
+        if (u.get("username") or "").strip() == username:
+            target = u
+            break
+    if not target:
+        raise ValueError("user not found")
+
+    fn = (first_name or "").strip()
+    ln = (last_name or "").strip()
+    if fn:
+        target["first_name"] = fn
+    else:
+        target.pop("first_name", None)
+    if ln:
+        target["last_name"] = ln
+    else:
+        target.pop("last_name", None)
+
     save_web_users(data)
 
 def delete_user(username: str) -> bool:
@@ -216,4 +272,5 @@ def delete_user(username: str) -> bool:
         return False
     save_web_users(data)
     return True
+
 

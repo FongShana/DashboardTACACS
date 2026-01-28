@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}Edit Web Account | NT TACACS+ Dashboard{% endblock %}
+{% block header %}Superadmin: Edit Web Account{% endblock %}
+
+{% block content %}
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="flash-container">
+        {% for category, message in messages %}
+          <div class="flash flash-{{ category }}">{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
+  <section class="section">
+    <div class="form-card">
+      <div class="form-title">Edit name for web user: <span class="text-mono">{{ target_username }}</span></div>
+      <div class="hint">Role: <span class="badge badge-neutral">{{ target_role }}</span> (this page only edits the optional name fields)</div>
+
+      <form method="post">
+        <div class="form-grid" style="margin-top:0.75rem;">
+          <div class="form-row">
+            <label>First name</label>
+            <input class="input" name="first_name" value="{{ first_name }}" placeholder="e.g. Somchai">
+          </div>
+          <div class="form-row">
+            <label>Last name</label>
+            <input class="input" name="last_name" value="{{ last_name }}" placeholder="e.g. Srisuk">
+          </div>
+        </div>
+
+        <div style="display:flex; gap:0.75rem; margin-top:0.75rem;">
+          <button class="btn btn-primary" type="submit" onclick="return confirm('Save name for {{ target_username }} ?');">Save</button>
+          <a href="{{ url_for('auth.web_users') }}" class="btn btn-secondary">Cancel</a>
+        </div>
+      </form>
+    </div>
+  </section>
+{% endblock %}

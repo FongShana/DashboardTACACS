@@ -15,6 +15,7 @@ from ..services.web_users_store import (
     get_user_record,
     get_user_device_group_ids,
     set_user_device_group_ids,
+    set_user_name,
 )
 
 from ..services.device_groups_store import list_device_groups
@@ -89,12 +90,58 @@ def web_users_add():
     username = (request.form.get("username") or "").strip()
     password = request.form.get("password") or ""
     role = (request.form.get("role") or ROLE_ADMIN).strip()
+    first_name = (request.form.get("first_name") or "").strip()
+    last_name = (request.form.get("last_name") or "").strip()
 
     try:
-        add_user(username=username, password=password, role=role)
+        add_user(username=username, password=password, role=role, first_name=first_name, last_name=last_name)
         flash(f"สร้างผู้ใช้สำหรับเข้าเว็บสำเร็จ: {username}", "success")
     except Exception as e:
         flash(f"สร้างผู้ใช้ไม่สำเร็จ: {e}", "error")
+    return redirect(url_for("auth.web_users"))
+
+
+@bp.get("/admin/web-users/<username>/edit")
+def web_user_edit(username: str):
+    if not _is_superadmin():
+        flash("หน้านี้สำหรับผู้ดูแลระบบ (superadmin) เท่านั้น", "error")
+        return redirect(url_for("dashboard.index"))
+
+    rec = get_user_record(username)
+    if not rec:
+        flash(f"ไม่พบบัญชีผู้ใช้: {username}", "error")
+        return redirect(url_for("auth.web_users"))
+
+    return render_template(
+        "admin_web_user_edit.html",
+        target_username=username,
+        target_role=(rec.get("role") or ROLE_ADMIN).strip().lower(),
+        first_name=(rec.get("first_name") or ""),
+        last_name=(rec.get("last_name") or ""),
+        active_page="admin_users",
+    )
+
+
+@bp.post("/admin/web-users/<username>/edit")
+def web_user_edit_submit(username: str):
+    if not _is_superadmin():
+        flash("หน้านี้สำหรับผู้ดูแลระบบ (superadmin) เท่านั้น", "error")
+        return redirect(url_for("dashboard.index"))
+
+    rec = get_user_record(username)
+    if not rec:
+        flash(f"ไม่พบบัญชีผู้ใช้: {username}", "error")
+        return redirect(url_for("auth.web_users"))
+
+    first_name = (request.form.get("first_name") or "").strip()
+    last_name = (request.form.get("last_name") or "").strip()
+
+    try:
+        set_user_name(username, first_name=first_name, last_name=last_name)
+        flash(f"บันทึกชื่อ-นามสกุลสำหรับ {username} สำเร็จ", "success")
+    except Exception as e:
+        flash(f"บันทึกไม่สำเร็จ: {e}", "error")
+
     return redirect(url_for("auth.web_users"))
 
 
