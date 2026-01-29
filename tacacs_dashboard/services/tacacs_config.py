@@ -89,6 +89,38 @@ def _user_profile_lines(role_name: str, priv: int) -> list[str]:
     return lines
 
 
+def _role_profile_block_lines(role_name: str, priv: int) -> list[str]:
+
+    role = (role_name or "OLT_VIEW").strip() or "OLT_VIEW"
+    p = max(1, min(15, int(priv)))
+
+    lines: list[str] = []
+    lines.append(f"  profile {role} {{")
+    lines.append("    script {")
+
+    # Session authorization: set privilege at login
+    lines.append("      if (service == exec) {")
+    lines.append(f"        set priv-lvl = {p}")
+    lines.append("        permit")
+    lines.append("      }")
+
+    # Command authorization
+    lines.append("      if (service == shell) {")
+    lines.append('        if (cmd == "") permit')
+
+    if role == "OLT_VIEW":
+        lines.append(r'        if (cmd =~ /^configure(\s|$)/) deny')
+    elif role == "OLT_ENGINEER":
+        lines.append(r'        if (cmd =~ /^reload(\s|$)/) deny')
+
+    lines.append("        permit")
+    lines.append("      }")
+    lines.append("      permit")
+    lines.append("    }")
+    lines.append("  }")
+    return lines
+
+
 def build_pass_secret_text() -> str:
     """
     สร้าง pass.secret จาก policy.users
@@ -128,18 +160,13 @@ def build_pass_secret_text() -> str:
 
         priv = role_priv.get(role, 1)
 
-        # ✅ ensure มี entry ใน user_secrets.json (ถ้ายังไม่มีก็ใส่ default ให้)
         ensure_user_has_password(username)
-
-        # ✅ password ของ user (ถ้าไม่มีราย user จะ fallback ไป default_password)
         pw = get_user_password(username)
 
         lines.append(f"user {username} {{")
         lines.append(f'  password login = clear "{_escape(pw)}"')
         lines.append("  password pap = login")
         lines.append(f"  member = {role}")
-        lines.append("")
-        lines.extend(_user_profile_lines(role, priv))
         lines.append("}")
         lines.append("")
 
@@ -191,15 +218,39 @@ def build_config_text() -> str:
         lines.append("  }")
         lines.append("")
 
-    # Roles -> group (ห้ามใส่ profile ใน group)
+    #
+    # Roles -> group + role_priv
     lines.append("  # ----- Roles (as groups) -----")
+    role_priv: dict[str, int] = {}
     for r in roles:
-        name = (r.get("name") or "ROLE_NO_NAME").strip()
+        name = (r.get("name") or "").strip()
         if not name:
             continue
+        role_priv[name] = _parse_privilege(r.get("privilege"))
         lines.append(f"  group = {name} {{")
         lines.append("  }")
         lines.append("")
+
+    # Profiles per role
+    lines.append("  # ----- Profiles (RBAC per role) -----")
+    for role_name, priv in role_priv.items():
+        lines.extend(_role_profile_block_lines(role_name, priv))
+        lines.append("")
+
+    # Ruleset: map member -> profile
+    lines.append("  # ----- Ruleset: member -> profile -----")
+    lines.append("  ruleset {")
+    lines.append("    rule {")
+    lines.append("      enabled = yes")
+    lines.append("      script {")
+    for role_name in role_priv.keys():
+        lines.append(f"        if (member == {role_name}) {{ profile = {role_name} permit }}")
+    lines.append("        deny")   # safe default
+    lines.append("      }")
+    lines.append("    }")
+    lines.append("  }")
+    lines.append("")
+
 
     # include pass.secret
     lines.append("  # Users are defined in separate pass.secret file")
