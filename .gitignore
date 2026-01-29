@@ -13,6 +13,7 @@ tacacs-generated.cfg
 policy.json
 secret.env
 pass.secret
+devices.secret
 
 # Logs
 *.log

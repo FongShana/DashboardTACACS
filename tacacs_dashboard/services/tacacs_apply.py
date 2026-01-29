@@ -4,7 +4,13 @@ from pathlib import Path
 import subprocess
 import os
 
-from .tacacs_config import build_config_text, build_pass_secret_text, PASS_SECRET_PATH
+from .tacacs_config import (
+    build_config_text,
+    build_pass_secret_text,
+    build_devices_secret_text,
+    PASS_SECRET_PATH,
+    DEVICES_SECRET_PATH,
+)
 
 DEFAULT_CONFIG_PATH = Path("/home/trainee25/tacacs-web/tacacs-generated.cfg")
 TACACS_BIN = "/usr/local/sbin/tac_plus-ng"
@@ -14,7 +20,8 @@ TACACS_SERVICE = "tac_plus-ng"
 def generate_config_file(config_path: Path | str = DEFAULT_CONFIG_PATH) -> tuple[str, int]:
     config_path = Path(config_path)
 
-    # 1) สร้าง pass.secret ก่อน (เพราะ config include)
+    # 1) สร้าง devices.secret + pass.secret ก่อน (เพราะ config include)
+    generate_devices_secret_file()
     generate_pass_secret_file()
 
     # 2) สร้าง tacacs-generated.cfg (atomic)
@@ -57,6 +64,24 @@ def check_config_syntax(config_path: Path | str = DEFAULT_CONFIG_PATH) -> tuple[
 
     ok = result.returncode == 0
     return ok, message
+
+
+def generate_devices_secret_file(dev_path: Path | str = DEVICES_SECRET_PATH) -> tuple[str, int]:
+    """สร้าง devices.secret (host blocks) ก่อนสร้าง tacacs-generated.cfg
+
+    เก็บ shared key ไว้ในไฟล์นี้ และตั้ง permission 600 เหมือน pass.secret
+    """
+    dev_path = Path(dev_path)
+    dev_path.parent.mkdir(parents=True, exist_ok=True)
+
+    text = build_devices_secret_text()
+
+    tmp_path = dev_path.with_suffix(".tmp")
+    tmp_path.write_text(text, encoding="utf-8")
+    os.chmod(tmp_path, 0o600)
+    tmp_path.replace(dev_path)
+
+    return str(dev_path), len(text.splitlines())
 
 
 def generate_pass_secret_file(pass_path: Path | str = PASS_SECRET_PATH) -> tuple[str, int]:
