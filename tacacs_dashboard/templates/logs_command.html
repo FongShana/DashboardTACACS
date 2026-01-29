@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+
+{% block title %}Command Audit | NT TACACS+{% endblock %}
+{% block header %}Logs &amp; Audit{% endblock %}
+
+{% block content %}
+
+{% include "_logs_subtabs.html" %}
+
+<section class="section">
+  <h2 class="section-title">Command Audit Summary</h2>
+  <div class="card-grid">
+    <div class="card">
+      <div class="card-label">Command Logs</div>
+      <div class="card-value">{{ total_cmd }}</div>
+      <div class="card-sub">คำสั่งที่ถูกส่งไปยัง OLT (ตาม filter ปัจจุบัน)</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Users</div>
+      <div class="card-value">{{ cmd_unique_user_count }}</div>
+      <div class="card-sub">ผู้ใช้ที่มี command ในช่วงนี้</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Devices</div>
+      <div class="card-value">{{ cmd_unique_device_count }}</div>
+      <div class="card-sub">OLT / Device ที่มี command</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Mode</div>
+      <div class="card-value" style="font-size: 1.0rem;">
+        {% if scan_all_cmd %}
+          scan all acct logs
+        {% else %}
+          fast (recent)
+        {% endif %}
+      </div>
+      <div class="card-sub">ค้นย้อนหลังเฉพาะเมื่อมี filter</div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <h2 class="section-title">User Activity (Commands)</h2>
+  <div class="table-wrapper">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>User</th>
+          <th>Command Count</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in cmd_user_activity %}
+        <tr>
+          <td>{{ row.user }}</td>
+          <td>{{ row.count }}</td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="2">ยังไม่มีข้อมูล command activity</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="section">
+  <h2 class="section-title">Command Audit Logs</h2>
+
+  <!-- Command filter bar -->
+  <form method="get" class="filter-bar" action="{{ url_for('logs.command') }}">
+    <!-- preserve auth filters -->
+    <input type="hidden" name="user" value="{{ user_filter }}">
+    <input type="hidden" name="device" value="{{ device_filter }}">
+    <input type="hidden" name="result" value="{{ result_filter }}">
+
+    <div class="filter-item">
+      <label>User</label>
+      <select name="cmd_user" class="input">
+        <option value="">-- All --</option>
+        {% for u in cmd_user_list %}
+        <option value="{{ u }}" {% if u == cmd_user_filter %}selected{% endif %}>{{ u }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="filter-item">
+      <label>Device</label>
+      <select name="cmd_device" class="input">
+        <option value="">-- All --</option>
+        {% for d in cmd_device_list %}
+        <option value="{{ d }}" {% if d == cmd_device_filter %}selected{% endif %}>{{ d }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="filter-item" style="min-width: 280px;">
+      <label>Contains</label>
+      <input
+        type="text"
+        name="cmd_contains"
+        class="input"
+        value="{{ cmd_contains_filter }}"
+        placeholder="เช่น gpon_olt-1/1/1 หรือ gpon_onu-1/1/1"
+      />
+    </div>
+
+    <div class="filter-actions">
+      <button type="submit" class="btn btn-primary">Apply</button>
+      <a
+        href="{{ url_for('logs.command', user=user_filter, device=device_filter, result=result_filter) }}"
+        class="btn btn-secondary"
+      >Clear Command Filter</a>
+    </div>
+  </form>
+
+  <div class="muted" style="margin-top: 8px;">
+    แสดงผลตาม filter ปัจจุบัน: <b>{{ total_cmd }}</b> รายการ | Users: <b>{{ cmd_unique_user_count }}</b> | Devices: <b>{{ cmd_unique_device_count }}</b>
+    {% if scan_all_cmd %}
+      | <span class="badge badge-neutral">scan all acct logs</span>
+    {% endif %}
+    {% if cmd_contains_filter %}
+      | Keyword: <span class="badge badge-neutral">{{ cmd_contains_filter }}</span>
+    {% endif %}
+  </div>
+
+  {% if cmd_user_breakdown and total_cmd > 0 %}
+  <div class="card" style="margin-top: 10px;">
+    <div class="card-label">Top Users (filtered commands)</div>
+    <div class="small" style="margin-top: 6px;">
+      {% for u, n in cmd_user_breakdown %}
+        <span class="badge badge-neutral" style="margin-right: 6px;">{{ u }}: {{ n }}</span>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="table-wrapper">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>User</th>
+          <th>Device</th>
+          <th>Command</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in command_events %}
+        <tr>
+          <td>{{ c.timestamp }}</td>
+          <td>{{ c.user }}</td>
+          <td>{{ c.device }}</td>
+          <td class="text-mono small">{{ c.command }}</td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="4">ยังไม่มี command logs (ยังไม่ได้ต่อกับ tac_plus-ng / OLT จริง)</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{% endblock %}

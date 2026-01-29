@@ -1,0 +1,11 @@
+<div class="subtabs">
+  <a
+    href="{{ url_for('logs.auth', user=user_filter, device=device_filter, result=result_filter, cmd_user=cmd_user_filter, cmd_device=cmd_device_filter, cmd_contains=cmd_contains_filter) }}"
+    class="subtab {% if active_logs_subpage=='auth' %}subtab-active{% endif %}"
+  >Auth &amp; Session Logs</a>
+
+  <a
+    href="{{ url_for('logs.command', user=user_filter, device=device_filter, result=result_filter, cmd_user=cmd_user_filter, cmd_device=cmd_device_filter, cmd_contains=cmd_contains_filter) }}"
+    class="subtab {% if active_logs_subpage=='command' %}subtab-active{% endif %}"
+  >Command Audit</a>
+</div>

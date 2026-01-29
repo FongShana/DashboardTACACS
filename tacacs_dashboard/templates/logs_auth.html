@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+
+{% block title %}Logs & Audit | NT TACACS+{% endblock %}
+{% block header %}Logs &amp; Audit{% endblock %}
+
+{% block content %}
+
+{% include "_logs_subtabs.html" %}
+
+<section class="section">
+  <h2 class="section-title">Summary</h2>
+  <div class="card-grid">
+    <div class="card">
+      <div class="card-label">Auth Events</div>
+      <div class="card-value">{{ total_events }}</div>
+      <div class="card-sub">จำนวนเหตุการณ์ Authentication (ตาม filter ปัจจุบัน)</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Success</div>
+      <div class="card-value">{{ total_success }}</div>
+      <div class="card-sub">ACCEPT / PASS</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Failed</div>
+      <div class="card-value">{{ total_fail }}</div>
+      <div class="card-sub">REJECT / FAIL</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Users</div>
+      <div class="card-value">{{ unique_user_count }}</div>
+      <div class="card-sub">ผู้ใช้ที่มีเหตุการณ์ในช่วงนี้</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Devices</div>
+      <div class="card-value">{{ unique_device_count }}</div>
+      <div class="card-sub">OLT / Device ที่มีการเข้าถึง</div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <h2 class="section-title">All Logs</h2>
+
+  <!-- Filter bar -->
+  <form method="get" class="filter-bar" action="{{ url_for('logs.auth') }}">
+    <!-- preserve command filters (so tab switching doesn't lose them) -->
+    <input type="hidden" name="cmd_user" value="{{ cmd_user_filter }}">
+    <input type="hidden" name="cmd_device" value="{{ cmd_device_filter }}">
+    <input type="hidden" name="cmd_contains" value="{{ cmd_contains_filter }}">
+
+    <div class="filter-item">
+      <label>User</label>
+      <select name="user" class="input">
+        <option value="">-- All --</option>
+        {% for u in user_list %}
+        <option value="{{ u }}" {% if u == user_filter %}selected{% endif %}>{{ u }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="filter-item">
+      <label>Device</label>
+      <select name="device" class="input">
+        <option value="">-- All --</option>
+        {% for d in device_list %}
+        <option value="{{ d }}" {% if d == device_filter %}selected{% endif %}>{{ d }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="filter-item">
+      <label>Result</label>
+      <select name="result" class="input">
+        <option value="">-- All --</option>
+        {% for r in result_list %}
+        <option value="{{ r }}" {% if r == result_filter %}selected{% endif %}>{{ r }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="filter-actions">
+      <button type="submit" class="btn btn-primary">Apply</button>
+      <a
+        href="{{ url_for('logs.auth', cmd_user=cmd_user_filter, cmd_device=cmd_device_filter, cmd_contains=cmd_contains_filter) }}"
+        class="btn btn-secondary"
+      >Reset</a>
+    </div>
+  </form>
+
+  <div class="table-wrapper">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>User</th>
+          <th>Device</th>
+          <th>Action</th>
+          <th>Result</th>
+          <th>Raw</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in recent_events %}
+        <tr>
+          <td>{{ e.timestamp }}</td>
+          <td>{{ e.user }}</td>
+          <td>{{ e.device }}</td>
+          <td>{{ e.action }}</td>
+          <td>
+            {% set res = (e.result or '') %}
+            {% if res.upper() in ['ACCEPT', 'OK', 'PASS', 'SUCCESS'] %}
+              <span class="badge badge-success">{{ res }}</span>
+            {% elif res.upper() in ['REJECT', 'FAIL', 'ERROR'] %}
+              <span class="badge badge-danger">{{ res }}</span>
+            {% else %}
+              <span class="badge badge-neutral">{{ res }}</span>
+            {% endif %}
+          </td>
+          <td class="text-mono small">{{ e.raw }}</td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="6">ยังไม่มี Authentication logs ตาม filter ที่เลือก</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{% endblock %}
