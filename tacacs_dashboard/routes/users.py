@@ -360,6 +360,26 @@ def index():
                     parts.append(f"{nm} ({gid})" if nm else gid)
                 u["device_groups_label"] = ", ".join(parts)
 
+    # --- UI sort: group -> username (so new users appear within their group) ---
+    def _primary_gid(u: dict) -> str:
+        ugids = _normalize_gid_list(u.get("device_group_ids"))
+        return ugids[0] if ugids else ""   # "" = unscoped
+
+    def _user_sort_key(u):
+        if not isinstance(u, dict):
+            return (1, "zzzz", "zzzz", "zzzz")
+        uname = (u.get("username") or u.get("name") or "").strip().lower()
+
+        gid = _primary_gid(u).lower()
+        unscoped = 1 if not gid else 0     # ให้ unscoped ไปอยู่ท้ายสุด
+        gname = (group_name_map.get(gid) or "").strip().lower()
+
+        # เรียง: scoped ก่อน -> ชื่อ group -> gid -> username
+        return (unscoped, gname or gid, gid, uname)
+
+    users.sort(key=_user_sort_key)
+
+
     return render_template(
         "users.html",
         users=users,
