@@ -81,23 +81,65 @@
     {% endif %}
 
     <div class="form-row" style="margin-top:0.25rem;">
-      <label>Target OLT (Optional)</label>
-      <div class="hint">ไม่เลือก = มีสิทธิ์ทุก OLT <b>ที่ Online</b> ภายใน scope ของ user นี้ • ถ้าเลือกบาง OLT = สร้าง/คงไว้เฉพาะ OLT ที่เลือก</div>
+      <label for="target_olt_choice">Target OLT (Optional)</label>
+      <div class="hint">เลือกได้ 1 รายการ: <b>All OLTs</b> หรือ <b>OLT IP</b> ที่อยู่ใน Device Group ที่เลือก (แสดงเฉพาะ OLT ที่ Online)</div>
 
-      <div style="margin-top:0.5rem; max-height:180px; overflow:auto; border:1px solid #e5e7eb; padding:0.6rem; border-radius:10px;">
+      {% set existing_ips = selected_target_olt_ips or [] %}
+      {% if existing_ips|length > 1 %}
+        <div class="hint" style="margin-top:0.35rem; color:#b45309;">หมายเหตุ: ผู้ใช้นี้เคยกำหนด Target OLT หลายตัวไว้: {{ existing_ips|join(', ') }} • ใน UI แบบ dropdown จะเลือกได้เพียง 1 ตัว หรือ All OLTs</div>
+      {% endif %}
+
+      {% set current_choice = '__ALL__' %}
+      {% if existing_ips|length == 1 %}
+        {% set current_choice = existing_ips[0] %}
+      {% endif %}
+
+      <select class="input" id="target_olt_choice" name="target_olt_choice" style="margin-top:0.5rem;">
+        <option value="__ALL__" {% if current_choice == '__ALL__' %}selected{% endif %}>All OLTs in selected group(s)</option>
         {% for d in devices %}
-          <label class="inline-check" style="display:flex; gap:0.5rem; align-items:center; margin:0.25rem 0;">
-            <input type="checkbox" name="target_olt_ips" value="{{ d.ip }}"
-                   {% if d.ip in selected_target_olt_ips %}checked{% endif %}>
-            <span>
-              <b>{{ d.name }}</b> <span class="text-mono">({{ d.ip }})</span>
-              <span class="hint">— {{ d.group_label }}</span>
-            </span>
-          </label>
-        {% else %}
-          <div class="hint">ยังไม่มี OLT ที่ Online ใน scope — ไปเพิ่ม/อัปเดตสถานะได้ที่เมนู <b>Devices / OLT</b></div>
+          <option value="{{ d.ip }}" data-gid="{{ d.group_id }}" {% if d.ip == current_choice %}selected{% endif %}>
+            {{ d.name }} ({{ d.ip }}) — {{ d.group_label }}
+          </option>
         {% endfor %}
-      </div>
+      </select>
+
+      {% if is_superadmin %}
+      <script>
+        (function () {
+          const sel = document.getElementById('target_olt_choice');
+          if (!sel) return;
+
+          const groupInputs = Array.from(document.querySelectorAll('input[name="device_group_ids"]'));
+
+          function updateOptions() {
+            const selected = new Set(groupInputs.filter(i => i.checked).map(i => (i.value || '').toLowerCase()));
+            const hasGroups = (groupInputs.length === 0) || (selected.size > 0);
+
+            Array.from(sel.options).forEach(opt => {
+              if (opt.value === '__ALL__') {
+                opt.hidden = false;
+                return;
+              }
+              const gid = (opt.dataset.gid || '').toLowerCase();
+              if (!hasGroups) {
+                opt.hidden = true;
+                return;
+              }
+              opt.hidden = (selected.size > 0) ? (!selected.has(gid)) : false;
+            });
+
+            if (sel.selectedOptions.length && sel.selectedOptions[0].hidden) {
+              sel.value = '__ALL__';
+            }
+
+            sel.disabled = !hasGroups;
+          }
+
+          groupInputs.forEach(i => i.addEventListener('change', updateOptions));
+          updateOptions();
+        })();
+      </script>
+      {% endif %}
     </div>
 
     <div class="form-row">
@@ -115,5 +157,6 @@
 </section>
 
 {% endblock %}
+
 
 

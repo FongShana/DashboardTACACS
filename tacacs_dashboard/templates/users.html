@@ -54,7 +54,6 @@
   {% if is_superadmin %}
     <div class="form-row" style="margin-top:0.25rem;">
       <label>Device Groups (Scope)</label>
-      <div class="hint">เลือก Device Group ที่ user นี้ใช้งานได้ (ต้องเลือกอย่างน้อย 1 กลุ่ม — หากต้องการให้ใช้งานได้ทุก OLT ให้เลือกทุกกลุ่ม)</div>
 
       <div style="margin-top:0.5rem;">
         {% for g in device_groups %}
@@ -73,25 +72,60 @@
   {% endif %}
 
   <div class="form-row" style="margin-top:0.25rem;">
-    <label>Target OLT (Optional)</label>
-    <div class="hint">ไม่เลือก = สร้าง local user บนทุก OLT <b>ที่ Online</b> ภายใน scope ของ user นี้ • ถ้าเลือกบาง OLT = สร้างเฉพาะ OLT ที่เลือก</div>
+    <label for="target_olt_choice">Target OLT (Optional)</label>
+    <div class="hint">เลือกได้ 1 รายการ: <b>All OLTs</b> หรือ <b>OLT IP</b> ที่อยู่ใน Device Group ที่เลือก (แสดงเฉพาะ OLT ที่ Online)</div>
 
-    <div style="margin-top:0.5rem; max-height:180px; overflow:auto; border:1px solid #e5e7eb; padding:0.6rem; border-radius:10px;">
+    <select class="input" id="target_olt_choice" name="target_olt_choice" style="margin-top:0.5rem;">
+      <option value="__ALL__" selected>All OLTs in selected group(s)</option>
       {% for d in devices %}
-        <label class="inline-check" style="display:flex; gap:0.5rem; align-items:center; margin:0.25rem 0;">
-          <input type="checkbox" name="target_olt_ips" value="{{ d.ip }}">
-          <span>
-            <b>{{ d.name }}</b> <span class="text-mono">({{ d.ip }})</span>
-            <span class="hint">— {{ d.group_label }}</span>
-          </span>
-        </label>
-      {% else %}
-        <div class="hint">ยังไม่มี OLT ที่ Online ใน scope — ไปเพิ่ม/อัปเดตสถานะได้ที่เมนู <b>Devices / OLT</b></div>
+        <option value="{{ d.ip }}" data-gid="{{ d.group_id }}">
+          {{ d.name }} ({{ d.ip }}) — {{ d.group_label }}
+        </option>
       {% endfor %}
-    </div>
+    </select>
+
+    {% if is_superadmin %}
+    <script>
+      (function () {
+        const sel = document.getElementById('target_olt_choice');
+        if (!sel) return;
+
+        const groupInputs = Array.from(document.querySelectorAll('input[name="device_group_ids"]'));
+
+        function updateOptions() {
+          // Admin: no group checkboxes -> show all
+          const selected = new Set(groupInputs.filter(i => i.checked).map(i => (i.value || '').toLowerCase()));
+          const hasGroups = (groupInputs.length === 0) || (selected.size > 0);
+
+          Array.from(sel.options).forEach(opt => {
+            if (opt.value === '__ALL__') {
+              opt.hidden = false;
+              return;
+            }
+            const gid = (opt.dataset.gid || '').toLowerCase();
+            if (!hasGroups) {
+              opt.hidden = true;
+              return;
+            }
+            opt.hidden = (selected.size > 0) ? (!selected.has(gid)) : false;
+          });
+
+          if (sel.selectedOptions.length && sel.selectedOptions[0].hidden) {
+            sel.value = '__ALL__';
+          }
+
+          // If no group selected, disable dropdown (backend will block save anyway)
+          sel.disabled = !hasGroups;
+        }
+
+        groupInputs.forEach(i => i.addEventListener('change', updateOptions));
+        updateOptions();
+      })();
+    </script>
+    {% endif %}
   </div>
 
-    <div class="form-row">
+  <div class="form-row">
       <label for="password">Password</label>
       <input class="input" id="password" type="password" name="password"
              placeholder="(เว้นว่าง = ใช้ default)" autocomplete="new-password">
@@ -211,6 +245,7 @@
 </section>
 
 {% endblock %}
+
 
 
 
