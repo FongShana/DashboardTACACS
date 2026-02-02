@@ -50,19 +50,11 @@
         <div class="hint">บัญชี admin นี้ยังไม่ได้ถูกกำหนด Device Group — กรุณาให้ superadmin กำหนดก่อน</div>
       {% endif %}
     </div>
-
-    <div class="form-row">
-      <label for="dev_status">Status</label>
-      <select class="input" id="dev_status" name="status">
-        <option value="Online">Online</option>
-        <option value="Offline">Offline</option>
-        <option value="Unknown" selected>Unknown</option>
-      </select>
-    </div>
   </div>
 
   <div class="hint" style="margin-top: 10px;">
-    Add Device จะเพิ่มลง <code>policy.json</code> เท่านั้น
+    Add Device จะเพิ่มลง <code>policy.json</code> เท่านั้น<br>
+    Status จะคำนวณอัตโนมัติจากการตรวจสอบการเชื่อมต่อ (ไม่บันทึกลง policy.json)
     — การยิงคำสั่งไปที่ OLT ให้กดปุ่ม <b>Bootstrap AAA</b> ในตารางด้านล่าง
   </div>
 
@@ -100,7 +92,17 @@
           <td>{{ d.vendor }}</td>
           <td>{{ d.ip }}</td>
           <td>{{ d.group_name if d.group_name is defined else '-' }}</td>
-          <td>{{ d.status }}</td>
+          <td>
+            {% set _st = (d.status or '')|string|lower %}
+            {% if _st == 'online' %}
+              <span class="status-ok">{{ d.status }}</span>
+            {% elif _st == 'offline' %}
+              <span class="status-fail">{{ d.status }}</span>
+            {% else %}
+              <span class="hint">{{ d.status }}</span>
+            {% endif %}
+          </td>
+
           <td class="actions">
             <a href="{{ url_for('devices.edit_device_form', name=d.name) }}"
                class="btn btn-secondary btn-sm">
@@ -144,7 +146,6 @@
 </section>
 
 {% endblock %}
-
 
 
 

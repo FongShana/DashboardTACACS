@@ -18,6 +18,7 @@ from tacacs_dashboard.services.policy_store import (
 from tacacs_dashboard.services.tacacs_config import _read_env
 from tacacs_dashboard.services.tacacs_apply import generate_config_file, check_config_syntax
 from tacacs_dashboard.services.olt_provision import provision_user_on_olt, deprovision_user_on_olt
+from tacacs_dashboard.services.olt_status import get_olt_status
 from tacacs_dashboard.services.access_control import allowed_device_group_ids
 
 from tacacs_dashboard.services.user_secrets_store import (
@@ -62,21 +63,6 @@ def _normalize_ip_list(value) -> list[str]:
             out.append(ip2)
     return out
 
-def _read_target_olt_choice_from_form(form) -> list[str]:
-    """Read target OLT selection from UI.
-
-    Supports both:
-    - New dropdown: name=target_olt_choice (value '__ALL__' or an IP)
-    - Legacy multi-select checkboxes: name=target_olt_ips
-    """
-    choice = (form.get('target_olt_choice') or '').strip()
-    if choice:
-        if choice in ('__ALL__', 'ALL', 'all'):
-            return []
-        return _normalize_ip_list([choice])
-    # fallback legacy
-    return _normalize_ip_list(form.getlist('target_olt_ips'))
-
 
 def _user_in_scope(user: dict, allowed_gids) -> bool:
     """Admin can only manage TACACS users that are scoped to their device groups."""
@@ -118,13 +104,12 @@ def _device_choices_for_ui(policy: dict, *, allowed_group_ids=None) -> list[dict
         if allowed_set is not None:
             if not gid or gid not in allowed_set:
                 continue
-
-        st = (d.get("status") or "").strip().lower()
-        if st and st not in ("online", "up"):
-            continue
-
         ip = (d.get("address") or d.get("ip") or "").strip()
         if not ip:
+            continue
+
+        st = get_olt_status(ip)
+        if st != "online":
             continue
 
         name = (d.get("name") or "").strip() or ip
@@ -139,7 +124,7 @@ def _device_choices_for_ui(policy: dict, *, allowed_group_ids=None) -> list[dict
             "name": name,
             "group_id": gid,
             "group_label": glabel,
-            "status": st or "online",
+            "status": st,
         })
 
     out.sort(key=lambda x: ((x.get("group_id") or ""), (x.get("name") or ""), (x.get("ip") or "")))
@@ -213,13 +198,13 @@ def _get_olt_ip_list(policy: dict, allowed_group_ids=None) -> list[str]:
             gid = (d.get("group_id") or "").strip().lower()
             if not gid or gid not in allowed_set:
                 continue
-        st = (d.get("status") or "").strip().lower()
-        if st and st not in ("online", "up"):
+        ip = (d.get("address") or d.get("ip") or "").strip()
+        if not ip:
+            continue
+        if get_olt_status(ip) != "online":
             continue
 
-        ip = (d.get("address") or d.get("ip") or "").strip()
-        if ip:
-            ips.append(ip)
+        ips.append(ip)
 
     # Only fall back to OLT_DEFAULT_IP when not scoped. If scoped, returning an
     # empty list is safer than provisioning to an unknown device.
@@ -540,7 +525,7 @@ def create_user_form():
         return redirect(url_for("users.index"))
 
     # Optional: target OLT subset (online only, must be inside assigned device groups)
-    raw_target_ips = _read_target_olt_choice_from_form(request.form)
+    raw_target_ips = _normalize_ip_list(request.form.getlist("target_olt_ips"))
     allowed_ips = set(_get_olt_ip_list(policy, allowed_group_ids=device_group_ids))
     target_ips = [ip for ip in raw_target_ips if ip in allowed_ips]
 
@@ -650,10 +635,8 @@ def edit_user_form(username):
     current_role = target.get("roles") or target.get("role") or ""
     selected_device_group_ids = _normalize_gid_list(target.get("device_group_ids"))
 
-    # For Edit UI:
-    # - superadmin: show all online OLTs (UI will filter by selected Device Group)
-    # - admin: show only online OLTs in user's scope
-    devices_for_form = _device_choices_for_ui(policy, allowed_group_ids=None if is_superadmin else selected_device_group_ids)
+    # For Edit UI: show only online OLTs in user's scope
+    devices_for_form = _device_choices_for_ui(policy, allowed_group_ids=selected_device_group_ids)
     selected_target_olt_ips = _normalize_ip_list(target.get("target_olt_ips"))
 
     return render_template(
@@ -740,7 +723,7 @@ def edit_user_submit(username):
         device_group_ids_to_set = selected
 
     # Optional: target OLT subset (online only, must be inside assigned device groups)
-    raw_target_ips = _read_target_olt_choice_from_form(request.form)
+    raw_target_ips = _normalize_ip_list(request.form.getlist("target_olt_ips"))
     allowed_ips = set(_get_olt_ip_list(policy, allowed_group_ids=device_group_ids_to_set))
     target_ips = [ip for ip in raw_target_ips if ip in allowed_ips]
 
@@ -857,8 +840,5 @@ def edit_role_submit(name):
     flash(f"อัปเดต Role {name} เรียบร้อยแล้ว", "success")
     _run_generate_check_restart_and_flash()
     return redirect(url_for("users.index"))
-
-
-
 
 

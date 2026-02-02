@@ -49,16 +49,6 @@
           {% endfor %}
         </select>
       </div>
-
-      <div class="form-row">
-        <label for="status">Status</label>
-        {% set st = device.status or "Unknown" %}
-        <select class="input" id="status" name="status">
-          <option value="Online"  {% if st == "Online" %}selected{% endif %}>Online</option>
-          <option value="Offline" {% if st == "Offline" %}selected{% endif %}>Offline</option>
-          <option value="Unknown" {% if st == "Unknown" %}selected{% endif %}>Unknown</option>
-        </select>
-      </div>
     </div>
 
     <div style="display:flex; gap:0.75rem; margin-top:0.75rem;">
@@ -69,5 +59,6 @@
 </section>
 
 {% endblock %}
+
 
 

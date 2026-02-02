@@ -4,6 +4,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 
 from tacacs_dashboard.services.policy_store import load_policy, save_policy
 from tacacs_dashboard.services.tacacs_config import _read_env
+from tacacs_dashboard.services.olt_status import get_olt_status, status_label
 from tacacs_dashboard.services.tacacs_apply import generate_config_file, check_config_syntax
 from tacacs_dashboard.services.olt_bootstrap import bootstrap_device_on_olt
 from tacacs_dashboard.services.access_control import allowed_device_group_ids, device_in_scope
@@ -98,20 +99,30 @@ def index():
         devices = [d for d in devices if isinstance(d, dict) and device_in_scope(d, allowed_gids)]
         groups = [g for g in groups if g.get("id") in set(allowed_gids)]
 
-    # enrich for UI
+    # enrich for UI (do NOT persist status in policy.json)
+    devices_ui = []
     for d in devices:
-        if isinstance(d, dict):
-            gid = (d.get("group_id") or "").strip()
-            d["group_id"] = gid
-            d["group_name"] = group_map.get(gid, "-") if gid else "-"
+        if not isinstance(d, dict):
+            continue
+        ui = dict(d)
+
+        gid = (ui.get("group_id") or "").strip()
+        ui["group_id"] = gid
+        ui["group_name"] = group_map.get(gid, "-") if gid else "-"
+
+        ip = (ui.get("ip") or ui.get("address") or "").strip()
+        ui["status"] = status_label(get_olt_status(ip))
+
+        devices_ui.append(ui)
 
     return render_template(
         "devices.html",
-        devices=devices,
+        devices=devices_ui,
         device_groups=groups,
         is_scoped_admin=(allowed_gids is not None),
         active_page="devices",
     )
+
 
 
 @bp.post("/create")
@@ -119,7 +130,6 @@ def create_device_form():
     name = request.form.get("name")
     ip = request.form.get("ip")
     vendor = request.form.get("vendor", "")
-    status = request.form.get("status", "Unknown")
     group_id = (request.form.get("group_id") or "").strip().lower()
     # UX: "Add Device" should only add to policy.json.
     # Bootstrap is a separate explicit action (safer).
@@ -161,7 +171,6 @@ def create_device_form():
         "name": name,
         "vendor": vendor,
         "ip": ip,
-        "status": status,
         "group_id": group_id,
     })
     policy["devices"] = devices
@@ -329,7 +338,6 @@ def edit_device_submit(name):
     # --- update other fields ---
     vendor = (request.form.get("vendor") or "").strip()
     ip = (request.form.get("ip") or "").strip()
-    status = (request.form.get("status") or "Unknown").strip() or "Unknown"
     group_id = (request.form.get("group_id") or "").strip().lower()
 
     if ip and not _is_valid_ipv4(ip):
@@ -355,13 +363,13 @@ def edit_device_submit(name):
     target["vendor"] = vendor
     if ip:
         target["ip"] = ip
-    target["status"] = status
+
+    # Stop storing status in policy.json (status is computed at runtime)
+    target.pop("status", None)
     target["group_id"] = group_id
 
     save_policy(policy)
     flash("บันทึก Device สำเร็จ", "success")
     return redirect(url_for("devices.index"))
-
-
 
 
