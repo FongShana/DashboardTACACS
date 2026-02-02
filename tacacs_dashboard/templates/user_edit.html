@@ -80,6 +80,26 @@
     </div>
     {% endif %}
 
+    <div class="form-row" style="margin-top:0.25rem;">
+      <label>Target OLT (Optional)</label>
+      <div class="hint">ไม่เลือก = มีสิทธิ์ทุก OLT <b>ที่ Online</b> ภายใน scope ของ user นี้ • ถ้าเลือกบาง OLT = สร้าง/คงไว้เฉพาะ OLT ที่เลือก</div>
+
+      <div style="margin-top:0.5rem; max-height:180px; overflow:auto; border:1px solid #e5e7eb; padding:0.6rem; border-radius:10px;">
+        {% for d in devices %}
+          <label class="inline-check" style="display:flex; gap:0.5rem; align-items:center; margin:0.25rem 0;">
+            <input type="checkbox" name="target_olt_ips" value="{{ d.ip }}"
+                   {% if d.ip in selected_target_olt_ips %}checked{% endif %}>
+            <span>
+              <b>{{ d.name }}</b> <span class="text-mono">({{ d.ip }})</span>
+              <span class="hint">— {{ d.group_label }}</span>
+            </span>
+          </label>
+        {% else %}
+          <div class="hint">ยังไม่มี OLT ที่ Online ใน scope — ไปเพิ่ม/อัปเดตสถานะได้ที่เมนู <b>Devices / OLT</b></div>
+        {% endfor %}
+      </div>
+    </div>
+
     <div class="form-row">
       <label for="password">New Password (เว้นว่าง = ไม่เปลี่ยน)</label>
       <input class="input" id="password" type="password" name="password"

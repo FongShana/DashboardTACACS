@@ -52,12 +52,83 @@ def _normalize_gid_list(value) -> list[str]:
     return out
 
 
+def _normalize_ip_list(value) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    for ip in value:
+        ip2 = (ip or "").strip()
+        if ip2 and ip2 not in out:
+            out.append(ip2)
+    return out
+
+
 def _user_in_scope(user: dict, allowed_gids) -> bool:
     """Admin can only manage TACACS users that are scoped to their device groups."""
     if allowed_gids is None:
         return True
     ugids = _normalize_gid_list(user.get("device_group_ids"))
     return any(g in set(allowed_gids) for g in ugids)
+
+
+def _group_name_map(policy: dict) -> dict[str, str]:
+    device_groups = policy.get("device_groups") or []
+    out: dict[str, str] = {}
+    for g in device_groups:
+        if not isinstance(g, dict):
+            continue
+        gid = (g.get("id") or g.get("group_id") or "").strip().lower()
+        if not gid:
+            continue
+        nm = (g.get("name") or "").strip()
+        if nm:
+            out[gid] = nm
+    return out
+
+
+def _device_choices_for_ui(policy: dict, *, allowed_group_ids=None) -> list[dict]:
+    """Return OLT choices for UI checkboxes (online only).
+
+    Each item: {ip, name, group_id, group_label, status}
+    """
+    allowed_set = set(allowed_group_ids) if isinstance(allowed_group_ids, list) else None
+    gmap = _group_name_map(policy)
+
+    out: list[dict] = []
+    for d in (policy.get("devices") or []):
+        if not isinstance(d, dict):
+            continue
+
+        gid = (d.get("group_id") or "").strip().lower()
+        if allowed_set is not None:
+            if not gid or gid not in allowed_set:
+                continue
+
+        st = (d.get("status") or "").strip().lower()
+        if st and st not in ("online", "up"):
+            continue
+
+        ip = (d.get("address") or d.get("ip") or "").strip()
+        if not ip:
+            continue
+
+        name = (d.get("name") or "").strip() or ip
+        gnm = (gmap.get(gid) or "").strip()
+        if gnm and gid:
+            glabel = f"{gnm} ({gid})"
+        else:
+            glabel = gid or gnm or "-"
+
+        out.append({
+            "ip": ip,
+            "name": name,
+            "group_id": gid,
+            "group_label": glabel,
+            "status": st or "online",
+        })
+
+    out.sort(key=lambda x: ((x.get("group_id") or ""), (x.get("name") or ""), (x.get("ip") or "")))
+    return out
 
 
 # -----------------------
@@ -165,7 +236,13 @@ def _olt_job_summary(out: str, ip: str) -> str:
     return f"=== OLT TELNET JOB: {ip} ==="
 
 
-def _maybe_provision_to_olts(username: str, role: str, status: str, device_group_ids=None) -> None:
+def _maybe_provision_to_olts(
+    username: str,
+    role: str,
+    status: str,
+    device_group_ids=None,
+    target_olt_ips: list[str] | None = None,
+) -> None:
     # provision เฉพาะ Active
     if (status or "").strip().lower() not in ("active", "enable", "enabled"):
         return
@@ -176,6 +253,11 @@ def _maybe_provision_to_olts(username: str, role: str, status: str, device_group
 
     policy = load_policy()
     olt_ips = _get_olt_ip_list(policy, allowed_group_ids=device_group_ids)
+
+    # If user picked a target subset, only provision to those IPs.
+    if target_olt_ips:
+        target_set = set(_normalize_ip_list(target_olt_ips))
+        olt_ips = [ip for ip in olt_ips if ip in target_set]
     if not olt_ips:
         if device_group_ids is not None:
             flash(
@@ -302,16 +384,7 @@ def index():
     roles = policy.get("roles", [])
 
     device_groups = policy.get("device_groups", []) or []
-    # map group_id -> display name
-    group_name_map = {}
-    for g in device_groups:
-        if not isinstance(g, dict):
-            continue
-        gid = (g.get("id") or g.get("group_id") or "").strip().lower()
-        if not gid:
-            continue
-        nm = (g.get("name") or "").strip()
-        group_name_map[gid] = nm
+    group_name_map = _group_name_map(policy)
 
     # Scope admin view to device groups (users without device_group_ids are treated as out of scope)
     _role, _web_uname, allowed_gids = _current_scope()
@@ -361,11 +434,17 @@ def index():
                     parts.append(f"{nm} ({gid})" if nm else gid)
                 u["device_groups_label"] = ", ".join(parts)
 
+    # ✅ OLT choices for Add User form
+    # - superadmin: all online OLTs
+    # - admin: only online OLTs in their assigned device groups
+    devices_for_form = _device_choices_for_ui(policy, allowed_group_ids=allowed_gids)
+
     return render_template(
         "users.html",
         users=users,
         roles=roles,
         device_groups=device_groups,
+        devices=devices_for_form,
         is_superadmin=is_superadmin,
         active_page="users",
     )
@@ -445,11 +524,23 @@ def create_user_form():
         flash(f"User {username} มีอยู่แล้ว", "error")
         return redirect(url_for("users.index"))
 
+    # Optional: target OLT subset (online only, must be inside assigned device groups)
+    raw_target_ips = _normalize_ip_list(request.form.getlist("target_olt_ips"))
+    allowed_ips = set(_get_olt_ip_list(policy, allowed_group_ids=device_group_ids))
+    target_ips = [ip for ip in raw_target_ips if ip in allowed_ips]
+
+    if raw_target_ips and not target_ips:
+        flash("OLT ที่เลือกไม่อยู่ใน Device Group ที่กำหนด หรือ OLT ไม่ได้ Online — โปรดเลือกใหม่ (หรือไม่เลือกเลย = ทุก OLT ใน scope)", "error")
+        return redirect(url_for("users.index"))
+    if raw_target_ips and len(target_ips) != len(raw_target_ips):
+        flash("บาง OLT ที่เลือกถูกตัดออก (อยู่นอก scope หรือ Offline) — ระบบจะใช้เฉพาะ OLT ที่ Online ใน scope เท่านั้น", "warning")
+
     upsert_user(
         username=username,
         role=role,
         status=status,
         device_group_ids=device_group_ids,
+        target_olt_ips=target_ips,
         first_name=first_name,
         last_name=last_name,
     )
@@ -462,7 +553,13 @@ def create_user_form():
 
     ok = _run_generate_check_restart_and_flash()
     if ok:
-        _maybe_provision_to_olts(username=username, role=role, status=status, device_group_ids=device_group_ids)
+        _maybe_provision_to_olts(
+            username=username,
+            role=role,
+            status=status,
+            device_group_ids=device_group_ids,
+            target_olt_ips=target_ips if target_ips else None,
+        )
 
     return redirect(url_for("users.index"))
 
@@ -538,13 +635,19 @@ def edit_user_form(username):
     current_role = target.get("roles") or target.get("role") or ""
     selected_device_group_ids = _normalize_gid_list(target.get("device_group_ids"))
 
+    # For Edit UI: show only online OLTs in user's scope
+    devices_for_form = _device_choices_for_ui(policy, allowed_group_ids=selected_device_group_ids)
+    selected_target_olt_ips = _normalize_ip_list(target.get("target_olt_ips"))
+
     return render_template(
         "user_edit.html",
         active_page="users",
         user=target,
         roles=roles,
         device_groups=device_groups,
+        devices=devices_for_form,
         selected_device_group_ids=selected_device_group_ids,
+        selected_target_olt_ips=selected_target_olt_ips,
         is_superadmin=is_superadmin,
         current_role=current_role,
     )
@@ -583,6 +686,7 @@ def edit_user_submit(username):
         return redirect(url_for("users.index"))
 
     existing_gids = _normalize_gid_list(target.get("device_group_ids"))
+    existing_target_ips = _normalize_ip_list(target.get("target_olt_ips"))
 
     # ✅ Scope check (admin)
     _role, _web_uname, allowed_gids = _current_scope()
@@ -618,6 +722,17 @@ def edit_user_submit(username):
             return redirect(url_for("users.edit_user_form", username=username))
         device_group_ids_to_set = selected
 
+    # Optional: target OLT subset (online only, must be inside assigned device groups)
+    raw_target_ips = _normalize_ip_list(request.form.getlist("target_olt_ips"))
+    allowed_ips = set(_get_olt_ip_list(policy, allowed_group_ids=device_group_ids_to_set))
+    target_ips = [ip for ip in raw_target_ips if ip in allowed_ips]
+
+    if raw_target_ips and not target_ips:
+        flash("OLT ที่เลือกไม่อยู่ใน Device Group ที่กำหนด หรือ OLT ไม่ได้ Online — โปรดเลือกใหม่ (หรือไม่เลือกเลย = ทุก OLT ใน scope)", "error")
+        return redirect(url_for("users.edit_user_form", username=username))
+    if raw_target_ips and len(target_ips) != len(raw_target_ips):
+        flash("บาง OLT ที่เลือกถูกตัดออก (อยู่นอก scope หรือ Offline) — ระบบจะใช้เฉพาะ OLT ที่ Online ใน scope เท่านั้น", "warning")
+
     role_names = {r.get("name") for r in roles if r.get("name")}
     if role_names and new_role and new_role not in role_names:
         flash(f"Role {new_role} ไม่มีอยู่ในระบบ", "error")
@@ -628,6 +743,7 @@ def edit_user_submit(username):
         role=new_role,
         status=new_status,
         device_group_ids=device_group_ids_to_set,
+        target_olt_ips=target_ips,
         first_name=new_first_name,
         last_name=new_last_name,
     )
@@ -649,7 +765,21 @@ def edit_user_submit(username):
                 _maybe_deprovision_specific_ips(username, out_scope)
 
         provision_gids = device_group_ids_to_set if device_group_ids_to_set is not None else existing_gids
-        _maybe_provision_to_olts(username=username, role=new_role, status=new_status, device_group_ids=provision_gids if provision_gids else None)
+
+        # If user sets a target subset, enforce it by removing local stub from other in-scope OLTs.
+        # (Guarded by OLT_AUTO_DEPROVISION)
+        if (new_status or "").strip().lower() in ("active", "enable", "enabled") and target_ips:
+            scope_ips = _get_olt_ip_list(policy, allowed_group_ids=provision_gids if provision_gids else None)
+            to_remove = [ip for ip in scope_ips if ip not in set(target_ips)]
+            _maybe_deprovision_specific_ips(username, to_remove)
+
+        _maybe_provision_to_olts(
+            username=username,
+            role=new_role,
+            status=new_status,
+            device_group_ids=provision_gids if provision_gids else None,
+            target_olt_ips=target_ips if target_ips else None,
+        )
 
     return redirect(url_for("users.index"))
 

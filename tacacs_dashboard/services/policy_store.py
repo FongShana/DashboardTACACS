@@ -50,6 +50,7 @@ def upsert_user(
     role: str,
     status: str = "Active",
     device_group_ids: Optional[List[str]] = None,
+    target_olt_ips: Optional[List[str]] = None,
     first_name: Optional[str] = None,
     last_name: Optional[str] = None,
 ) -> bool:
@@ -78,6 +79,18 @@ def upsert_user(
     # If explicitly provided but empty => treat as 'unscoped' (remove key)
     clear_device_groups = (gids is not None and len(gids) == 0)
 
+    # normalize target OLT IPs (optional field; backward compatible)
+    ips: Optional[List[str]] = None
+    if target_olt_ips is not None:
+        ips = []
+        for ip in target_olt_ips:
+            ip2 = (ip or "").strip()
+            if ip2 and ip2 not in ips:
+                ips.append(ip2)
+
+    # If explicitly provided but empty => clear key (meaning: all OLTs in scope)
+    clear_target_ips = (ips is not None and len(ips) == 0)
+
     # normalize names (optional fields; backward compatible)
     fn = None if first_name is None else (first_name or "").strip()
     ln = None if last_name is None else (last_name or "").strip()
@@ -102,6 +115,15 @@ def upsert_user(
                 else:
                     u.pop("last_name", None)
 
+            # Optional field: target_olt_ips
+            # - If caller passes None: don't touch existing
+            # - If caller passes []: remove key (meaning: all OLTs in scope)
+            if ips is not None:
+                if clear_target_ips:
+                    u.pop("target_olt_ips", None)
+                else:
+                    u["target_olt_ips"] = ips
+
             if gids is not None:
                 if clear_device_groups:
                     u.pop("device_group_ids", None)
@@ -122,6 +144,10 @@ def upsert_user(
         rec["last_name"] = ln
     if gids is not None and not clear_device_groups:
         rec["device_group_ids"] = gids
+
+    # Save only when explicitly set and non-empty
+    if ips is not None and not clear_target_ips:
+        rec["target_olt_ips"] = ips
 
     users.append(rec)
     save_policy(policy)
