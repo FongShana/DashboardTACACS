@@ -448,6 +448,55 @@ def index():
     # - admin: only online OLTs in their assigned device groups
     devices_for_form = _device_choices_for_ui(policy, allowed_group_ids=allowed_gids)
 
+
+    # ✅ Sort users by Device Group (then Last/First/Username) for cleaner UX
+    # - Uses device_groups order from policy.json as the primary ordering
+    group_order: dict[str, int] = {}
+    for i, g in enumerate(device_groups):
+        gid = ""
+        if isinstance(g, dict):
+            gid = (g.get("id") or g.get("group_id") or "").strip().lower()
+        else:
+            gid = str(getattr(g, "id", "") or "").strip().lower()
+        if gid and gid not in group_order:
+            group_order[gid] = i
+
+
+    # ✅ OLT choices for Add User form
+    # - superadmin: all online OLTs
+    # - admin: only online OLTs in their assigned device groups
+    devices_for_form = _device_choices_for_ui(policy, allowed_group_ids=allowed_gids)
+
+
+    # --- UI sort: Device Group -> Role -> Username ---
+    # Group order follows device_groups list order in policy.json (stable, user-friendly)
+    group_order = {}
+    for i, g in enumerate(device_groups):
+        gid = (g.get("id") or "").strip().lower()
+        if gid and gid not in group_order:
+            group_order[gid] = i
+
+    def _primary_gid(u: dict) -> str:
+        ugids = _normalize_gid_list(u.get("device_group_ids"))
+        return ugids[0] if ugids else ""   # "" = legacy/unscoped
+
+    def _role_key(u: dict) -> str:
+        r = (u.get("roles") or u.get("role") or u.get("group") or "").strip().lower()
+        return r
+
+    def _user_sort_key(u):
+        if not isinstance(u, dict):
+            return (9999, 1, "zzzz", "zzzz")
+        uname = (u.get("username") or u.get("name") or "").strip().lower()
+        gid = _primary_gid(u).lower()
+        unscoped = 1 if not gid else 0  # put legacy/unscoped at the end
+        gidx = group_order.get(gid, 9999)
+        role = _role_key(u)
+        return (gidx, unscoped, role, uname)
+
+    users.sort(key=_user_sort_key)
+
+
     return render_template(
         "users.html",
         users=users,
