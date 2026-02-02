@@ -301,6 +301,29 @@ body {
   font-weight: 600;
 }
 
+/* Status dot (Online/Offline/Unknown) */
+.status-dot{
+  display:inline-block;
+  width:10px;
+  height:10px;
+  margin-left:8px;
+  border-radius:999px;
+  vertical-align:middle;
+  border:1px solid rgba(0,0,0,0.15);
+}
+
+.status-dot-ok{
+  background:#16a34a; /* green */
+}
+
+.status-dot-fail{
+  background:#dc2626; /* red */
+}
+
+.status-dot-unk{
+  background:#6b7280; /* gray */
+}
+
 code {
   background: #f3f4f6;
   padding: 0.05rem 0.25rem;

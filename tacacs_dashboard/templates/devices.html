@@ -95,11 +95,20 @@
           <td>
             {% set _st = (d.status or '')|string|lower %}
             {% if _st == 'online' %}
-              <span class="status-ok">{{ d.status }}</span>
+              <span class="status-ok">
+                {{ d.status }}
+                <span class="status-dot status-dot-ok" title="Online"></span>
+              </span>
             {% elif _st == 'offline' %}
-              <span class="status-fail">{{ d.status }}</span>
+              <span class="status-fail">
+                {{ d.status }}
+                <span class="status-dot status-dot-fail" title="Offline"></span>
+              </span>
             {% else %}
-              <span class="hint">{{ d.status }}</span>
+              <span class="hint">
+                {{ d.status }}
+                <span class="status-dot status-dot-unk" title="Unknown"></span>
+              </span>
             {% endif %}
           </td>
 
