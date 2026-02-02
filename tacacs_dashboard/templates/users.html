@@ -44,12 +44,7 @@
   {% if is_superadmin %}
     <div class="form-row" style="margin-top:0.25rem;">
       <label>Device Groups (Scope)</label>
-      <div class="hint">เลือก Device Group ที่ user นี้ใช้งานได้ (ถ้าไม่เลือกและ/หรือเลือก Unscoped = ใช้ได้ทุก OLT)</div>
-
-      <label class="inline-check" style="display:flex; gap:0.5rem; align-items:center; margin:0.35rem 0;">
-        <input type="checkbox" name="unscoped" value="1" checked>
-        <span><b>Unscoped</b> <span class="hint" style="display:inline;">(All OLTs)</span></span>
-      </label>
+      <div class="hint">เลือก Device Group ที่ user นี้ใช้งานได้ (ต้องเลือกอย่างน้อย 1 กลุ่ม — หากต้องการให้ใช้งานได้ทุก OLT ให้เลือกทุกกลุ่ม)</div>
 
       <div style="margin-top:0.5rem;">
         {% for g in device_groups %}
@@ -63,7 +58,7 @@
           <div class="hint">ยังไม่มี device group — ไปสร้างได้ที่ <b>Superadmin: Device Groups</b></div>
         {% endfor %}
       </div>
-      <div class="hint" style="margin-top:0.35rem;">หมายเหตุ: ถ้ายกเลิก Unscoped แล้วไม่เลือก group เลย ระบบจะไม่ให้บันทึก</div>
+      <div class="hint" style="margin-top:0.35rem;">หมายเหตุ: ถ้าไม่เลือก group เลย ระบบจะไม่ให้บันทึก</div>
     </div>
   {% endif %}
 
@@ -112,7 +107,7 @@
           <td>{{ user.username }}</td>
           <td>{{ user.roles }}</td>
           <td>{{ user.status }}</td>
-          {% if is_superadmin %}<td>{{ user.device_groups_label or "All (unscoped)" }}</td>{% endif %}
+          {% if is_superadmin %}<td>{{ user.device_groups_label or "All OLTs" }}</td>{% endif %}
           <td>{{ user.last_login }}</td>
           <td>
             <a href="{{ url_for('users.edit_user_form', username=user.username) }}"
@@ -183,5 +178,6 @@
 </section>
 
 {% endblock %}
+
 
 

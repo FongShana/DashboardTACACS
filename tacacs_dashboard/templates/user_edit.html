@@ -51,13 +51,7 @@
     {% if is_superadmin %}
     <div class="form-row" style="margin-top:0.25rem;">
       <label>Device Groups (Scope)</label>
-      <div class="hint">กำหนดว่า user นี้สามารถใช้งานได้เฉพาะ OLT ใน group ไหน (ถ้าเลือก Unscoped = ใช้ได้ทุก OLT)</div>
-
-      <label class="inline-check" style="display:flex; gap:0.5rem; align-items:center; margin:0.35rem 0;">
-        <input type="checkbox" name="unscoped" value="1"
-               {% if selected_device_group_ids|length == 0 %}checked{% endif %}>
-        <span><b>Unscoped</b> <span class="hint" style="display:inline;">(All OLTs)</span></span>
-      </label>
+      <div class="hint">กำหนดว่า user นี้สามารถใช้งานได้เฉพาะ OLT ใน group ไหน (ต้องเลือกอย่างน้อย 1 กลุ่ม — หากต้องการให้ใช้งานได้ทุก OLT ให้เลือกทุกกลุ่ม)</div>
 
       <div style="margin-top:0.5rem;">
         {% for g in device_groups %}
@@ -72,7 +66,7 @@
           <div class="hint">ยังไม่มี device group — ไปสร้างได้ที่ <b>Superadmin: Device Groups</b></div>
         {% endfor %}
       </div>
-      <div class="hint" style="margin-top:0.35rem;">หมายเหตุ: ถ้ายกเลิก Unscoped แล้วไม่เลือก group เลย ระบบจะไม่ให้บันทึก</div>
+      <div class="hint" style="margin-top:0.35rem;">หมายเหตุ: ถ้าไม่เลือก group เลย ระบบจะไม่ให้บันทึก</div>
     </div>
     {% endif %}
 
@@ -91,4 +85,5 @@
 </section>
 
 {% endblock %}
+
 

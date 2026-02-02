@@ -352,33 +352,14 @@ def index():
                 continue
             ugids = _normalize_gid_list(u.get("device_group_ids"))
             if not ugids:
-                u["device_groups_label"] = "All (unscoped)"
+                # legacy: device_group_ids ว่าง => เทียบเท่า all OLTs
+                u["device_groups_label"] = "All OLTs"
             else:
                 parts = []
                 for gid in ugids:
                     nm = group_name_map.get(gid) or ""
                     parts.append(f"{nm} ({gid})" if nm else gid)
                 u["device_groups_label"] = ", ".join(parts)
-
-    # --- UI sort: group -> username (so new users appear within their group) ---
-    def _primary_gid(u: dict) -> str:
-        ugids = _normalize_gid_list(u.get("device_group_ids"))
-        return ugids[0] if ugids else ""   # "" = unscoped
-
-    def _user_sort_key(u):
-        if not isinstance(u, dict):
-            return (1, "zzzz", "zzzz", "zzzz")
-        uname = (u.get("username") or u.get("name") or "").strip().lower()
-
-        gid = _primary_gid(u).lower()
-        unscoped = 1 if not gid else 0     # ให้ unscoped ไปอยู่ท้ายสุด
-        gname = (group_name_map.get(gid) or "").strip().lower()
-
-        # เรียง: scoped ก่อน -> ชื่อ group -> gid -> username
-        return (unscoped, gname or gid, gid, uname)
-
-    users.sort(key=_user_sort_key)
-
 
     return render_template(
         "users.html",
@@ -419,7 +400,7 @@ def create_user_form():
 
     # device group scoping for TACACS users:
     # - admin: forced to their own allowed_gids
-    # - superadmin: can optionally set device_group_ids (empty/unscoped = all OLTs)
+    # - superadmin: must assign at least 1 device group (ยกเลิกแนวคิด Unscoped)
     device_group_ids = None
 
     if allowed_gids is not None:
@@ -429,27 +410,25 @@ def create_user_form():
             return redirect(url_for("users.index"))
         device_group_ids = allowed_gids
     else:
-        # superadmin (optional selection from form)
-        unscoped = (request.form.get("unscoped") or "").strip().lower() in ("1", "true", "yes", "on")
+        # superadmin: ต้องเลือก Device Group อย่างน้อย 1 กลุ่ม (ยกเลิกแนวคิด Unscoped)
         selected = _normalize_gid_list(request.form.getlist("device_group_ids"))
-
-        if not unscoped and not selected:
-            flash("กรุณาเลือก Device Group อย่างน้อย 1 กลุ่ม หรือเลือก Unscoped", "error")
+        if not selected:
+            flash("กรุณาเลือก Device Group อย่างน้อย 1 กลุ่ม", "error")
             return redirect(url_for("users.index"))
 
-        if not unscoped and selected:
-            # validate against existing device groups
-            valid_set = set()
-            for g in (load_policy().get("device_groups") or []):
-                if isinstance(g, dict):
-                    gid = (g.get("id") or g.get("group_id") or "").strip().lower()
-                    if gid:
-                        valid_set.add(gid)
-            selected = [g for g in selected if g in valid_set] if valid_set else selected
-            if not selected:
-                flash("กรุณาเลือก Device Group อย่างน้อย 1 กลุ่ม หรือเลือก Unscoped", "error")
-                return redirect(url_for("users.index"))
-            device_group_ids = selected
+        # validate against existing device groups
+        valid_set = set()
+        for g in (load_policy().get("device_groups") or []):
+            if isinstance(g, dict):
+                gid = (g.get("id") or g.get("group_id") or "").strip().lower()
+                if gid:
+                    valid_set.add(gid)
+        selected = [g for g in selected if g in valid_set] if valid_set else selected
+        if not selected:
+            flash("กรุณาเลือก Device Group อย่างน้อย 1 กลุ่ม", "error")
+            return redirect(url_for("users.index"))
+
+        device_group_ids = selected
 
     policy = load_policy()
     users = policy.get("users", [])
@@ -597,8 +576,8 @@ def edit_user_submit(username):
     is_superadmin = (_role == "superadmin")
 
     # device_group_ids update:
-    # - admin: cannot change scope; if user is unscoped, it will be scoped to admin's groups on first edit
-    # - superadmin: can assign/clear device_group_ids from Edit UI
+    # - admin: cannot change scope; if user has no device_group_ids, it will be scoped to admin's groups on first edit
+    # - superadmin: must assign at least 1 device group (ยกเลิกแนวคิด Unscoped)
     device_group_ids_to_set = None
 
     if allowed_gids is not None:
@@ -609,26 +588,22 @@ def edit_user_submit(username):
         # หาก user ยังไม่เคยถูก scope (ไม่มี device_group_ids) ให้ยึดตาม group ของ admin ปัจจุบัน
         device_group_ids_to_set = existing_gids or allowed_gids
     else:
-        # superadmin: read from form
-        unscoped = (request.form.get("unscoped") or "").strip().lower() in ("1", "true", "yes", "on")
+        # superadmin: read from form (ต้องเลือกอย่างน้อย 1 group)
         selected = _normalize_gid_list(request.form.getlist("device_group_ids"))
 
-        if unscoped:
-            device_group_ids_to_set = []  # clear => unscoped
-        else:
-            # validate group ids exist
-            valid_set = set()
-            for g in (policy.get("device_groups") or []):
-                if isinstance(g, dict):
-                    gid = (g.get("id") or g.get("group_id") or "").strip().lower()
-                    if gid:
-                        valid_set.add(gid)
-            selected = [g for g in selected if g in valid_set] if valid_set else selected
+        # validate group ids exist
+        valid_set = set()
+        for g in (policy.get("device_groups") or []):
+            if isinstance(g, dict):
+                gid = (g.get("id") or g.get("group_id") or "").strip().lower()
+                if gid:
+                    valid_set.add(gid)
+        selected = [g for g in selected if g in valid_set] if valid_set else selected
 
-            if not selected:
-                flash("กรุณาเลือก Device Group อย่างน้อย 1 กลุ่ม หรือเลือก Unscoped", "error")
-                return redirect(url_for("users.edit_user_form", username=username))
-            device_group_ids_to_set = selected
+        if not selected:
+            flash("กรุณาเลือก Device Group อย่างน้อย 1 กลุ่ม", "error")
+            return redirect(url_for("users.edit_user_form", username=username))
+        device_group_ids_to_set = selected
 
     role_names = {r.get("name") for r in roles if r.get("name")}
     if role_names and new_role and new_role not in role_names:
@@ -715,6 +690,5 @@ def edit_role_submit(name):
     flash(f"อัปเดต Role {name} เรียบร้อยแล้ว", "success")
     _run_generate_check_restart_and_flash()
     return redirect(url_for("users.index"))
-
 
 
