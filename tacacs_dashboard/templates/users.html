@@ -24,6 +24,16 @@
     </div>
 
     <div class="form-row">
+      <label for="first_name">First name</label>
+      <input class="input" id="first_name" type="text" name="first_name" placeholder="(optional)">
+    </div>
+
+    <div class="form-row">
+      <label for="last_name">Last name</label>
+      <input class="input" id="last_name" type="text" name="last_name" placeholder="(optional)">
+    </div>
+
+    <div class="form-row">
       <label for="role">Role</label>
       <select class="input" id="role" name="role" required>
         {% for role in roles %}
@@ -94,6 +104,8 @@
       <thead>
         <tr>
           <th>Username</th>
+          <th>First name</th>
+          <th>Last name</th>
           <th>Roles</th>
           <th>Status</th>
           {% if is_superadmin %}<th>Device Group</th>{% endif %}
@@ -105,6 +117,8 @@
         {% for user in users %}
         <tr>
           <td>{{ user.username }}</td>
+          <td>{{ user.first_name or "-" }}</td>
+          <td>{{ user.last_name or "-" }}</td>
           <td>{{ user.roles }}</td>
           <td>{{ user.status }}</td>
           {% if is_superadmin %}<td>{{ user.device_groups_label or "All OLTs" }}</td>{% endif %}
@@ -128,7 +142,7 @@
         </tr>
         {% else %}
         <tr>
-          <td colspan="{% if is_superadmin %}6{% else %}5{% endif %}">ยังไม่มีผู้ใช้ในระบบ</td>
+          <td colspan="{% if is_superadmin %}8{% else %}7{% endif %}">ยังไม่มีผู้ใช้ในระบบ</td>
         </tr>
         {% endfor %}
       </tbody>

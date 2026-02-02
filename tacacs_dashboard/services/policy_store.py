@@ -50,6 +50,8 @@ def upsert_user(
     role: str,
     status: str = "Active",
     device_group_ids: Optional[List[str]] = None,
+    first_name: Optional[str] = None,
+    last_name: Optional[str] = None,
 ) -> bool:
     """
     return True = created, False = updated
@@ -76,11 +78,30 @@ def upsert_user(
     # If explicitly provided but empty => treat as 'unscoped' (remove key)
     clear_device_groups = (gids is not None and len(gids) == 0)
 
+    # normalize names (optional fields; backward compatible)
+    fn = None if first_name is None else (first_name or "").strip()
+    ln = None if last_name is None else (last_name or "").strip()
+
     for u in users:
         if (u.get("username") or "").strip() == username:
             u["roles"] = role      # ใช้ key 'roles' ตาม policy ของคุณ
             u["status"] = status
             u.setdefault("last_login", "-")
+
+            # Optional fields: first_name / last_name
+            # - If caller passes None: don't touch existing
+            # - If caller passes empty string: remove key
+            if fn is not None:
+                if fn:
+                    u["first_name"] = fn
+                else:
+                    u.pop("first_name", None)
+            if ln is not None:
+                if ln:
+                    u["last_name"] = ln
+                else:
+                    u.pop("last_name", None)
+
             if gids is not None:
                 if clear_device_groups:
                     u.pop("device_group_ids", None)
@@ -95,6 +116,10 @@ def upsert_user(
         "status": status,
         "last_login": "-",
     }
+    if fn:
+        rec["first_name"] = fn
+    if ln:
+        rec["last_name"] = ln
     if gids is not None and not clear_device_groups:
         rec["device_group_ids"] = gids
 
@@ -117,5 +142,6 @@ def delete_user(username: str) -> bool:
 
     save_policy(policy)
     return True
+
 
 

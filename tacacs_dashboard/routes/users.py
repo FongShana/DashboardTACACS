@@ -377,6 +377,8 @@ def index():
 @bp.post("/create")
 def create_user_form():
     username = (request.form.get("username") or "").strip()
+    first_name = (request.form.get("first_name") or "").strip()
+    last_name = (request.form.get("last_name") or "").strip()
     role = (request.form.get("role") or "").strip()
     status = (request.form.get("status") or "Active").strip() or "Active"
     password = (request.form.get("password") or "").strip()
@@ -443,7 +445,14 @@ def create_user_form():
         flash(f"User {username} มีอยู่แล้ว", "error")
         return redirect(url_for("users.index"))
 
-    upsert_user(username=username, role=role, status=status, device_group_ids=device_group_ids)
+    upsert_user(
+        username=username,
+        role=role,
+        status=status,
+        device_group_ids=device_group_ids,
+        first_name=first_name,
+        last_name=last_name,
+    )
     flash(f"เพิ่มผู้ใช้ {username} เรียบร้อย", "success")
 
     if password:
@@ -551,6 +560,10 @@ def edit_user_submit(username):
     new_role = (request.form.get("role") or "").strip()
     new_status = (request.form.get("status") or "").strip() or "Active"
 
+    # Optional fields (backward compatible)
+    new_first_name = (request.form.get("first_name") or "").strip()
+    new_last_name = (request.form.get("last_name") or "").strip()
+
     new_password = (request.form.get("password") or "").strip()
     if new_password:
         set_user_password(username, new_password)
@@ -610,7 +623,14 @@ def edit_user_submit(username):
         flash(f"Role {new_role} ไม่มีอยู่ในระบบ", "error")
         return redirect(url_for("users.edit_user_form", username=username))
 
-    upsert_user(username=username, role=new_role, status=new_status, device_group_ids=device_group_ids_to_set)
+    upsert_user(
+        username=username,
+        role=new_role,
+        status=new_status,
+        device_group_ids=device_group_ids_to_set,
+        first_name=new_first_name,
+        last_name=new_last_name,
+    )
     flash(f"อัปเดตผู้ใช้ {username} เรียบร้อยแล้ว", "success")
 
     ok = _run_generate_check_restart_and_flash()
@@ -690,5 +710,7 @@ def edit_role_submit(name):
     flash(f"อัปเดต Role {name} เรียบร้อยแล้ว", "success")
     _run_generate_check_restart_and_flash()
     return redirect(url_for("users.index"))
+
+
 
 
