@@ -104,9 +104,14 @@ def _device_choices_for_ui(policy: dict, *, allowed_group_ids=None) -> list[dict
         if allowed_set is not None:
             if not gid or gid not in allowed_set:
                 continue
+        # Only consider bootstrapped devices (missing key => assume bootstrapped)
+        if d.get("bootstrap_done") is False:
+            continue
+
         ip = (d.get("address") or d.get("ip") or "").strip()
         if not ip:
             continue
+
 
         st = get_olt_status(ip)
         if st != "online":
@@ -198,6 +203,10 @@ def _get_olt_ip_list(policy: dict, allowed_group_ids=None) -> list[str]:
             gid = (d.get("group_id") or "").strip().lower()
             if not gid or gid not in allowed_set:
                 continue
+        # Only consider bootstrapped devices (missing key => assume bootstrapped)
+        if d.get("bootstrap_done") is False:
+            continue
+
         ip = (d.get("address") or d.get("ip") or "").strip()
         if not ip:
             continue

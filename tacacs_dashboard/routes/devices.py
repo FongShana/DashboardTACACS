@@ -111,7 +111,13 @@ def index():
         ui["group_name"] = group_map.get(gid, "-") if gid else "-"
 
         ip = (ui.get("ip") or ui.get("address") or "").strip()
-        ui["status"] = status_label(get_olt_status(ip))
+        # If device has not been bootstrapped yet, show Unknown (onboarding not complete)
+        # Missing key => treat as already bootstrapped (backward compatible)
+        if ui.get("bootstrap_done") is False:
+            ui["status"] = "Unknown"
+            ui["status_hint"] = "Not bootstrapped"
+        else:
+            ui["status"] = status_label(get_olt_status(ip))
 
         devices_ui.append(ui)
 
@@ -172,6 +178,8 @@ def create_device_form():
         "vendor": vendor,
         "ip": ip,
         "group_id": group_id,
+        # Mark as not bootstrapped yet (will show status=Unknown until bootstrap is done)
+        "bootstrap_done": False,
     })
     policy["devices"] = devices
     save_policy(policy)
@@ -196,8 +204,7 @@ def generate_config_submit():
 def bootstrap_device_submit(name: str):
     """Explicit bootstrap action (recommended UX).
 
-    - safe by default: does NOT `write` unless (a) user checks save, and
-      (b) OLT_AUTO_WRITE / OLT_ALLOW_WRITE env enables it.
+    - safe by default: dashboard does NOT perform `write` (persist) to OLT.
     - supports preview (dry-run) via button name="dry_run".
     """
 
@@ -218,18 +225,10 @@ def bootstrap_device_submit(name: str):
         flash(f"Device {name} ไม่มี IP ใน policy.json", "error")
         return redirect(url_for("devices.index"))
 
-    want_save = (request.form.get("save") or "").strip().lower() in ("1", "true", "yes", "on")
     is_preview = (request.form.get("dry_run") or "").strip().lower() in ("1", "true", "yes", "on")
 
-    # extra safety gate (env)
-    allow_write_raw = (_read_env("OLT_ALLOW_WRITE", "") or "").strip().lower()
-    if not allow_write_raw:
-        allow_write_raw = (_read_env("OLT_AUTO_WRITE", "0") or "0").strip().lower()
-    allow_write = allow_write_raw in ("1", "true", "yes", "on")
-
-    save = bool(want_save and allow_write and not is_preview)
-    if want_save and not allow_write and not is_preview:
-        flash("ปฏิเสธการ write: ต้องเปิด OLT_ALLOW_WRITE=1 (หรือ OLT_AUTO_WRITE=1) ใน secret.env ก่อน", "error")
+    # write is disabled from dashboard for safety (no 'save' option)
+    save = False
 
     try:
         out = bootstrap_device_on_olt(ip, save=save, dry_run=is_preview)
@@ -238,11 +237,16 @@ def bootstrap_device_submit(name: str):
         if len(out) > 2500:
             out = "... (truncated)\n" + out[-2400:]
 
+        # Mark device as bootstrapped (persist in policy.json)
+        if not is_preview:
+            dev["bootstrap_done"] = True
+            save_policy(policy)
+
         if is_preview:
             flash(f"Preview Bootstrap (no changes) for {name} ({ip})\n{out}", "info")
         else:
             flash(
-                f"Bootstrap AAA on OLT {name} ({ip}) สำเร็จ (write={'ON' if save else 'OFF'})\n{out}",
+                f"Bootstrap AAA on OLT {name} ({ip}) สำเร็จ\n{out}",
                 "success",
             )
     except Exception as e:
@@ -322,6 +326,8 @@ def edit_device_submit(name):
         flash("คุณไม่มีสิทธิ์แก้ไขอุปกรณ์นี้", "error")
         return redirect(url_for("devices.index"))
 
+    old_ip = (target.get("ip") or target.get("address") or "").strip()
+
     # --- ✅ rename ได้ ---
     new_name = (request.form.get("name") or "").strip() or name
     if new_name != name:
@@ -363,6 +369,9 @@ def edit_device_submit(name):
     target["vendor"] = vendor
     if ip:
         target["ip"] = ip
+        # If IP changed, require re-bootstrap (new/changed device)
+        if ip.strip() and ip.strip() != (old_ip or "").strip():
+            target["bootstrap_done"] = False
 
     # Stop storing status in policy.json (status is computed at runtime)
     target.pop("status", None)

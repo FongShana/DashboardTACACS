@@ -93,25 +93,15 @@
           <td>{{ d.ip }}</td>
           <td>{{ d.group_name if d.group_name is defined else '-' }}</td>
           <td>
-            {% set _st = (d.status or '')|string|lower %}
-            {% if _st == 'online' %}
-              <span class="status-ok">
-                {{ d.status }}
-                <span class="status-dot status-dot-ok" title="Online"></span>
-              </span>
-            {% elif _st == 'offline' %}
-              <span class="status-fail">
-                {{ d.status }}
-                <span class="status-dot status-dot-fail" title="Offline"></span>
-              </span>
-            {% else %}
-              <span class="hint">
-                {{ d.status }}
-                <span class="status-dot status-dot-unk" title="Unknown"></span>
-              </span>
-            {% endif %}
-          </td>
-
+  {% set _st = (d.status or '')|string|lower %}
+  {% if _st == 'online' %}
+    <span class="status-ok">{{ d.status }}<span class="status-dot status-dot-ok" title="Online"></span></span>
+  {% elif _st == 'offline' %}
+    <span class="status-fail">{{ d.status }}<span class="status-dot status-dot-fail" title="Offline"></span></span>
+  {% else %}
+    <span class="hint">{{ d.status }}<span class="status-dot status-dot-unk" title="Unknown"></span></span>
+  {% endif %}
+</td>
           <td class="actions">
             <a href="{{ url_for('devices.edit_device_form', name=d.name) }}"
                class="btn btn-secondary btn-sm">
@@ -120,11 +110,7 @@
             <form method="post"
                   action="{{ url_for('devices.bootstrap_device_submit', name=d.name) }}"
                   style="display:inline;">
-              <label class="inline-check">
-                <input type="checkbox" name="save" value="1">
-                <span>write</span>
-              </label>
-              <button type="submit" name="dry_run" value="1"
+<button type="submit" name="dry_run" value="1"
                       class="btn btn-secondary btn-sm"
                       onclick="return confirm('Preview bootstrap (no changes) บน {{ d.name }} ?')">
                 Preview
