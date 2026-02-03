@@ -694,7 +694,8 @@ def edit_user_form(username):
     selected_device_group_ids = _normalize_gid_list(target.get("device_group_ids"))
 
     # For Edit UI: show only online OLTs in user's scope
-    devices_for_form = _device_choices_for_ui(policy, allowed_group_ids=selected_device_group_ids)
+    choice_scope_gids = None if is_superadmin else selected_device_group_ids
+    devices_for_form = _device_choices_for_ui(policy, allowed_group_ids=choice_scope_gids)
     selected_target_olt_ips = _normalize_ip_list(target.get("target_olt_ips"))
 
     return render_template(
