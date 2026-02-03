@@ -10,13 +10,13 @@ from tacacs_dashboard.services.privilege import parse_privilege
 
 from tacacs_dashboard.services.policy_store import (
     load_policy,
-    save_policy,
+    update_policy,
     upsert_user,
     delete_user,
     is_reserved_olt_username,
 )
 from tacacs_dashboard.services.tacacs_config import _read_env
-from tacacs_dashboard.services.tacacs_apply import generate_config_file, check_config_syntax
+from tacacs_dashboard.services.tacacs_apply import generate_check_restart
 from tacacs_dashboard.services.olt_provision import provision_user_on_olt, deprovision_user_on_olt
 from tacacs_dashboard.services.olt_status import get_olt_status
 from tacacs_dashboard.services.access_control import allowed_device_group_ids
@@ -156,13 +156,18 @@ def _restart_tac_plus_ng() -> tuple[bool, str]:
 
 def _run_generate_check_restart_and_flash() -> bool:
     """
-    1) generate pass.secret + tacacs-generated.cfg
+    1) generate devices.secret + pass.secret + tacacs-generated.cfg
     2) syntax check (-P)
     3) restart tac_plus-ng (ถ้า syntax OK)
-    return True ถ้าทุกอย่าง OK
+
+    NOTE: This is serialized across Gunicorn workers via an inter-process lock.
     """
-    path, line_count = generate_config_file()
-    ok, message = check_config_syntax(path)
+    result = generate_check_restart()
+    path = result.get("config_path")
+    line_count = int(result.get("line_count") or 0)
+
+    ok = bool(result.get("syntax_ok"))
+    message = (result.get("syntax_message") or "").strip()
     short_msg = message if len(message) <= 400 else message[:400] + " ... (truncated)"
 
     if not ok:
@@ -177,7 +182,8 @@ def _run_generate_check_restart_and_flash() -> bool:
         "success",
     )
 
-    rok, rmsg = _restart_tac_plus_ng()
+    rok = bool(result.get("restart_ok"))
+    rmsg = (result.get("restart_message") or "").strip()
     rmsg_short = rmsg if len(rmsg) <= 400 else rmsg[:400] + " ... (truncated)"
     if rok:
         flash(f"Restart tac_plus-ng สำเร็จ: {rmsg_short}", "success")
@@ -871,20 +877,8 @@ def edit_role_form(name):
 @bp.post("/roles/<name>/edit")
 def edit_role_submit(name):
     name = (name or "").strip()
-    policy = load_policy()
-    roles = policy.get("roles", [])
 
-    target = None
-    for r in roles:
-        if (r.get("name") or "").strip() == name:
-            target = r
-            break
-
-    if not target:
-        flash(f"ไม่พบ Role {name}", "error")
-        return redirect(url_for("users.index"))
-
-    target["description"] = (request.form.get("description") or "").strip()
+    desc = (request.form.get("description") or "").strip()
 
     # privilege validation: must be 1..15
     priv_raw = (request.form.get("privilege") or "").strip()
@@ -893,9 +887,30 @@ def edit_role_submit(name):
         return redirect(url_for("users.edit_role_form", name=name))
 
     priv = parse_privilege(priv_raw, default=15)
-    target["privilege"] = str(priv)
 
-    save_policy(policy)
+    try:
+        def _mut(policy):
+            roles = policy.get("roles", [])
+            if not isinstance(roles, list):
+                raise ValueError("roles ใน policy.json ไม่ถูกต้อง (ควรเป็น list)")
+
+            target = None
+            for r in roles:
+                if isinstance(r, dict) and (r.get("name") or "").strip() == name:
+                    target = r
+                    break
+            if not target:
+                raise ValueError(f"ไม่พบ Role {name}")
+
+            target["description"] = desc
+            target["privilege"] = str(priv)
+            policy["roles"] = roles
+
+        update_policy(_mut)
+    except ValueError as e:
+        flash(str(e), "error")
+        return redirect(url_for("users.index"))
+
     flash(f"อัปเดต Role {name} เรียบร้อยแล้ว", "success")
     _run_generate_check_restart_and_flash()
     return redirect(url_for("users.index"))

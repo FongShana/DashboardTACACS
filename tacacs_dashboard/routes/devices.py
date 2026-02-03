@@ -2,10 +2,10 @@ import re
 import subprocess
 from flask import Blueprint, render_template, request, redirect, url_for, flash, session
 
-from tacacs_dashboard.services.policy_store import load_policy, save_policy
+from tacacs_dashboard.services.policy_store import load_policy, update_policy
 from tacacs_dashboard.services.tacacs_config import _read_env
 from tacacs_dashboard.services.olt_status import get_olt_status, status_label
-from tacacs_dashboard.services.tacacs_apply import generate_config_file, check_config_syntax
+from tacacs_dashboard.services.tacacs_apply import generate_check_restart
 from tacacs_dashboard.services.olt_bootstrap import bootstrap_device_on_olt
 from tacacs_dashboard.services.access_control import allowed_device_group_ids, device_in_scope
 from tacacs_dashboard.services.device_groups_store import list_device_groups, get_group_name_map, group_exists
@@ -56,13 +56,17 @@ def _restart_tac_plus_ng() -> tuple[bool, str]:
 
 
 def _run_generate_check_restart_and_flash() -> bool:
-    """Generate config + syntax check + restart tac_plus-ng.
+    """Generate config + syntax check + restart tac_plus-ng (serialized).
 
     Used from Devices/OLT page so that after adding a new device, operator can
     explicitly apply config before bootstrapping.
     """
-    path, line_count = generate_config_file()
-    ok, message = check_config_syntax(path)
+    result = generate_check_restart()
+    path = result.get("config_path")
+    line_count = int(result.get("line_count") or 0)
+
+    ok = bool(result.get("syntax_ok"))
+    message = (result.get("syntax_message") or "").strip()
     short_msg = message if len(message) <= 400 else message[:400] + " ... (truncated)"
 
     if not ok:
@@ -77,7 +81,8 @@ def _run_generate_check_restart_and_flash() -> bool:
         "success",
     )
 
-    rok, rmsg = _restart_tac_plus_ng()
+    rok = bool(result.get("restart_ok"))
+    rmsg = (result.get("restart_message") or "").strip()
     rmsg_short = rmsg if len(rmsg) <= 400 else rmsg[:400] + " ... (truncated)"
     if rok:
         flash(f"Restart tac_plus-ng สำเร็จ: {rmsg_short}", "success")
@@ -166,23 +171,28 @@ def create_device_form():
         flash("Device Group ไม่ถูกต้อง (ไม่พบใน policy.json)", "error")
         return redirect(url_for("devices.index"))
 
-    policy = load_policy()
-    devices = policy.get("devices", [])
+    try:
+        def _mut(policy):
+            devices = policy.get("devices", [])
+            if not isinstance(devices, list):
+                devices = []
+            if any(isinstance(d, dict) and d.get("name") == name for d in devices):
+                raise ValueError(f"Device {name} มีอยู่แล้ว")
 
-    if any(d.get("name") == name for d in devices):
-        flash(f"Device {name} มีอยู่แล้ว", "error")
+            devices.append({
+                "name": name,
+                "vendor": vendor,
+                "ip": ip,
+                "group_id": group_id,
+                # Mark as not bootstrapped yet (will show status=Unknown until bootstrap is done)
+                "bootstrap_done": False,
+            })
+            policy["devices"] = devices
+
+        update_policy(_mut)
+    except ValueError as e:
+        flash(str(e), "error")
         return redirect(url_for("devices.index"))
-
-    devices.append({
-        "name": name,
-        "vendor": vendor,
-        "ip": ip,
-        "group_id": group_id,
-        # Mark as not bootstrapped yet (will show status=Unknown until bootstrap is done)
-        "bootstrap_done": False,
-    })
-    policy["devices"] = devices
-    save_policy(policy)
 
     flash(f"เพิ่มอุปกรณ์ {name} เรียบร้อย", "success")
 
@@ -239,8 +249,20 @@ def bootstrap_device_submit(name: str):
 
         # Mark device as bootstrapped (persist in policy.json)
         if not is_preview:
-            dev["bootstrap_done"] = True
-            save_policy(policy)
+            try:
+                def _mut(policy2):
+                    devices2 = policy2.get("devices", [])
+                    if not isinstance(devices2, list):
+                        raise ValueError("devices is not a list")
+                    for d in devices2:
+                        if isinstance(d, dict) and (d.get("name") or "") == name:
+                            d["bootstrap_done"] = True
+                            return
+                    raise ValueError(f"ไม่พบ Device {name} ใน policy.json (ระหว่างบันทึก bootstrap_done)")
+
+                update_policy(_mut)
+            except Exception as e:
+                flash(f"บันทึกสถานะ bootstrap_done ล้มเหลว: {e}", "error")
 
         if is_preview:
             flash(f"Preview Bootstrap (no changes) for {name} ({ip})\n{out}", "info")
@@ -267,13 +289,20 @@ def delete_device_form(name):
             flash("คุณไม่มีสิทธิ์ลบอุปกรณ์นี้", "error")
             return redirect(url_for("devices.index"))
 
-    new_devices = [d for d in devices if d.get("name") != name]
-    if len(new_devices) == len(devices):
-        flash(f"ไม่พบอุปกรณ์ {name}", "error")
-        return redirect(url_for("devices.index"))
+    try:
+        def _mut(policy2):
+            devices2 = policy2.get("devices", [])
+            if not isinstance(devices2, list):
+                devices2 = []
+            new_devices = [d for d in devices2 if not (isinstance(d, dict) and d.get("name") == name)]
+            if len(new_devices) == len(devices2):
+                raise ValueError(f"ไม่พบอุปกรณ์ {name}")
+            policy2["devices"] = new_devices
 
-    policy["devices"] = new_devices
-    save_policy(policy)
+        update_policy(_mut)
+    except ValueError as e:
+        flash(str(e), "error")
+        return redirect(url_for("devices.index"))
 
     flash(f"ลบอุปกรณ์ {name} เรียบร้อย", "success")
     return redirect(url_for("devices.index"))
@@ -377,9 +406,38 @@ def edit_device_submit(name):
     target.pop("status", None)
     target["group_id"] = group_id
 
-    save_policy(policy)
+    try:
+        def _mut(policy2):
+            devices2 = policy2.get("devices", [])
+            if not isinstance(devices2, list):
+                raise ValueError("devices is not a list")
+
+            target2 = next((d for d in devices2 if isinstance(d, dict) and (d.get("name") or "") == name), None)
+            if not target2:
+                raise ValueError(f"ไม่พบ Device {name}")
+
+            # rename (re-check uniqueness under lock)
+            if new_name != name:
+                if any(isinstance(d, dict) and (d.get("name") or "").strip() == new_name for d in devices2 if d is not target2):
+                    raise ValueError(f"ชื่อ Device '{new_name}' ซ้ำกับตัวอื่น")
+                target2["name"] = new_name
+
+            target2["vendor"] = vendor
+            if ip:
+                target2["ip"] = ip
+                if ip.strip() and ip.strip() != (old_ip or "").strip():
+                    target2["bootstrap_done"] = False
+
+            # Stop storing status in policy.json (status is computed at runtime)
+            target2.pop("status", None)
+            target2["group_id"] = group_id
+
+        update_policy(_mut)
+    except ValueError as e:
+        flash(str(e), "error")
+        return redirect(url_for("devices.edit_device_form", name=name))
+
     flash("บันทึก Device สำเร็จ", "success")
     return redirect(url_for("devices.index"))
-
 
 

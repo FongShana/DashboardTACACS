@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from .policy_store import load_policy, save_policy
+from .policy_store import load_policy, update_policy
 
 # group id: lowercase + digits + _ -
 GROUP_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,31}$")
@@ -56,22 +56,22 @@ def upsert_device_group(group_id: str, name: str) -> bool:
     gid = normalize_group_id(group_id)
     nm = (name or "").strip() or gid
 
-    policy = load_policy()
-    groups = policy.setdefault("device_groups", [])
-    if not isinstance(groups, list):
-        groups = []
-        policy["device_groups"] = groups
+    def _mut(policy: Dict[str, Any]) -> bool:
+        groups = policy.setdefault("device_groups", [])
+        if not isinstance(groups, list):
+            groups = []
+            policy["device_groups"] = groups
 
-    for g in groups:
-        if isinstance(g, dict) and normalize_group_id(g.get("id") or "") == gid:
-            g["id"] = gid
-            g["name"] = nm
-            save_policy(policy)
-            return False
+        for g in groups:
+            if isinstance(g, dict) and normalize_group_id(g.get("id") or "") == gid:
+                g["id"] = gid
+                g["name"] = nm
+                return False
 
-    groups.append({"id": gid, "name": nm})
-    save_policy(policy)
-    return True
+        groups.append({"id": gid, "name": nm})
+        return True
+
+    return update_policy(_mut)
 
 
 def delete_device_group(group_id: str) -> None:
@@ -80,19 +80,25 @@ def delete_device_group(group_id: str) -> None:
     if not gid:
         raise ValueError("group_id is required")
 
-    policy = load_policy()
-    devices = policy.get("devices") or []
-    if isinstance(devices, list):
-        in_use = [d for d in devices if isinstance(d, dict) and (d.get("group_id") or "").strip() == gid]
-        if in_use:
-            raise ValueError(f"cannot delete group '{gid}': {len(in_use)} device(s) still assigned")
+    def _mut(policy: Dict[str, Any]) -> None:
+        devices = policy.get("devices") or []
+        if isinstance(devices, list):
+            in_use = [d for d in devices if isinstance(d, dict) and (d.get("group_id") or "").strip().lower() == gid]
+            if in_use:
+                raise ValueError(f"cannot delete group '{gid}': {len(in_use)} device(s) still assigned")
 
-    groups = policy.get("device_groups") or []
-    if not isinstance(groups, list):
-        return
-    before = len(groups)
-    policy["device_groups"] = [g for g in groups if not (isinstance(g, dict) and normalize_group_id(g.get("id") or "") == gid)]
-    if len(policy["device_groups"]) == before:
-        raise ValueError("group not found")
+        groups = policy.get("device_groups") or []
+        if not isinstance(groups, list):
+            raise ValueError("group not found")
 
-    save_policy(policy)
+        before = len(groups)
+        policy["device_groups"] = [
+            g for g in groups
+            if not (isinstance(g, dict) and normalize_group_id(g.get("id") or "") == gid)
+        ]
+        if len(policy["device_groups"]) == before:
+            raise ValueError("group not found")
+
+    # update_policy will save after mutator returns; if mutator raises, nothing is written.
+    update_policy(_mut)
+

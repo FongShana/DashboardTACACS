@@ -4,6 +4,7 @@ from pathlib import Path
 import subprocess
 import os
 
+from .locks import exclusive_lock
 from .tacacs_config import (
     build_config_text,
     build_pass_secret_text,
@@ -18,6 +19,11 @@ TACACS_SERVICE = "tac_plus-ng"
 
 
 def generate_config_file(config_path: Path | str = DEFAULT_CONFIG_PATH) -> tuple[str, int]:
+    """Generate devices.secret, pass.secret, and tacacs-generated.cfg (atomic).
+
+    This function does NOT do a global mutex. For safe multi-user operation,
+    call generate_check_restart() which holds a process-wide lock.
+    """
     config_path = Path(config_path)
 
     # 1) สร้าง devices.secret + pass.secret ก่อน (เพราะ config include)
@@ -117,3 +123,34 @@ def restart_tacacs_daemon() -> tuple[bool, str]:
     except Exception as e:
         return False, str(e)
 
+
+def generate_check_restart(config_path: Path | str = DEFAULT_CONFIG_PATH) -> dict:
+    """Safe multi-user apply: generate -> syntax check -> restart (serialized).
+
+    Returns:
+      {
+        "config_path": str,
+        "line_count": int,
+        "syntax_ok": bool,
+        "syntax_message": str,
+        "restart_ok": bool,
+        "restart_message": str,
+      }
+    """
+    with exclusive_lock("tacacs_apply", timeout_sec=120.0):
+        cfg_path, line_count = generate_config_file(config_path)
+        ok, msg = check_config_syntax(cfg_path)
+
+        restart_ok = False
+        restart_msg = "(skipped)"
+        if ok:
+            restart_ok, restart_msg = restart_tacacs_daemon()
+
+        return {
+            "config_path": cfg_path,
+            "line_count": line_count,
+            "syntax_ok": ok,
+            "syntax_message": msg,
+            "restart_ok": restart_ok,
+            "restart_message": restart_msg,
+        }

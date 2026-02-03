@@ -17,6 +17,8 @@ devices.secret
 
 # Logs
 *.log
+.locks/
+*.lock
 
 user_secrets.json
 web_users.json
