@@ -37,15 +37,6 @@ def load_default_user_password() -> str:
     return _read_env("DEFAULT_USER_PASSWORD", "test") or "test"
 
 
-def load_enable15_password() -> str:
-    """
-    enable password (ระดับ 15) ที่ OLT จะถามตอนพิมพ์ enable
-    ตั้งไว้ใน secret.env เช่น:
-      OLT_ENABLE15_PASSWORD=zxr10
-    """
-    return _read_env("OLT_ENABLE15_PASSWORD", "")
-
-
 def _escape(s: str) -> str:
     return (s or "").replace("\\", "\\\\").replace('"', '\\"')
 
