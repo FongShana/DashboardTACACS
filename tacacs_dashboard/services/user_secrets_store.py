@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 from typing import Dict, Any
 
+from .locks import file_lock
+
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 SECRET_ENV_PATH = BASE_DIR / "secret.env"
 DEFAULT_SECRETS_PATH = BASE_DIR / "user_secrets.json"
@@ -49,6 +51,16 @@ def save_user_secrets(data: Dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
+def update_user_secrets(mutator, *, lock_timeout: float = 30.0):
+    """Concurrency-safe read-modify-write for user_secrets.json."""
+    with file_lock("user_secrets", timeout=lock_timeout):
+        s = load_user_secrets()
+        result = mutator(s)
+        save_user_secrets(s)
+        return result
+
+
+
 def get_default_password() -> str:
     s = load_user_secrets()
     pw = (s.get("default_password") or "").strip()
@@ -63,12 +75,12 @@ def set_user_password(username: str, password: str) -> None:
     if not password:
         raise ValueError("password is required")
 
-    s = load_user_secrets()
-    s.setdefault("users", {})
-    s["users"].setdefault(username, {})
-    s["users"][username]["password"] = password
-    save_user_secrets(s)
+    def _mut(s: Dict[str, Any]) -> None:
+        s.setdefault("users", {})
+        s["users"].setdefault(username, {})
+        s["users"][username]["password"] = password
 
+    update_user_secrets(_mut)
 
 def get_user_password(username: str) -> str:
     username = (username or "").strip()
@@ -83,19 +95,23 @@ def ensure_user_has_password(username: str) -> None:
     username = (username or "").strip()
     if not username:
         return
-    s = load_user_secrets()
-    s.setdefault("users", {})
-    if username not in s["users"]:
-        s["users"][username] = {"password": get_default_password()}
-        save_user_secrets(s)
 
+    def _mut(s: Dict[str, Any]) -> None:
+        s.setdefault("users", {})
+        if username not in s["users"]:
+            s["users"][username] = {"password": get_default_password()}
+
+    update_user_secrets(_mut)
 
 def delete_user_password(username: str) -> None:
     username = (username or "").strip()
-    s = load_user_secrets()
-    users = s.get("users") or {}
-    if username in users:
-        users.pop(username, None)
-        s["users"] = users
-        save_user_secrets(s)
+
+    def _mut(s: Dict[str, Any]) -> None:
+        users = s.get("users") or {}
+        if username in users:
+            users.pop(username, None)
+            s["users"] = users
+
+    update_user_secrets(_mut)
+
 
