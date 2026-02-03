@@ -2,10 +2,10 @@ import re
 import subprocess
 from flask import Blueprint, render_template, request, redirect, url_for, flash, session
 
-from tacacs_dashboard.services.policy_store import load_policy, save_policy, update_policy
+from tacacs_dashboard.services.policy_store import load_policy, save_policy
 from tacacs_dashboard.services.tacacs_config import _read_env
 from tacacs_dashboard.services.olt_status import get_olt_status, status_label
-from tacacs_dashboard.services.tacacs_apply import apply_tacacs_config
+from tacacs_dashboard.services.tacacs_apply import generate_config_file, check_config_syntax
 from tacacs_dashboard.services.olt_bootstrap import bootstrap_device_on_olt
 from tacacs_dashboard.services.access_control import allowed_device_group_ids, device_in_scope
 from tacacs_dashboard.services.device_groups_store import list_device_groups, get_group_name_map, group_exists
@@ -56,38 +56,35 @@ def _restart_tac_plus_ng() -> tuple[bool, str]:
 
 
 def _run_generate_check_restart_and_flash() -> bool:
-    """Generate -> syntax check -> restart tac_plus-ng (serialized)."""
-    r = apply_tacacs_config()
-    path = r.get("config_path", "?")
-    line_count = r.get("line_count", 0)
-    check_ok = bool(r.get("check_ok"))
-    check_msg = (r.get("check_message") or "").strip()
-    restart_ok = bool(r.get("restart_ok"))
-    restart_msg = (r.get("restart_message") or "").strip()
+    """Generate config + syntax check + restart tac_plus-ng.
 
-    short_check = check_msg if len(check_msg) <= 400 else check_msg[:400] + " ... (truncated)"
-    short_restart = restart_msg if len(restart_msg) <= 400 else restart_msg[:400] + " ... (truncated)"
+    Used from Devices/OLT page so that after adding a new device, operator can
+    explicitly apply config before bootstrapping.
+    """
+    path, line_count = generate_config_file()
+    ok, message = check_config_syntax(path)
+    short_msg = message if len(message) <= 400 else message[:400] + " ... (truncated)"
 
-    if not check_ok:
+    if not ok:
         flash(
-            f"Generate config ที่ {path} แล้ว แต่ syntax check FAILED. Message: {short_check}",
+            f"Generate config ที่ {path} แล้ว แต่ syntax check FAILED. Message: {short_msg}",
             "error",
         )
         return False
 
     flash(
-        f"Generate config สำเร็จ: {path} ({line_count} lines). Syntax check: OK. Message: {short_check}",
+        f"Generate config สำเร็จ: {path} ({line_count} lines). Syntax check: OK. Message: {short_msg}",
         "success",
     )
 
-    if restart_ok:
-        flash(f"Restart tac_plus-ng สำเร็จ: {short_restart}", "success")
+    rok, rmsg = _restart_tac_plus_ng()
+    rmsg_short = rmsg if len(rmsg) <= 400 else rmsg[:400] + " ... (truncated)"
+    if rok:
+        flash(f"Restart tac_plus-ng สำเร็จ: {rmsg_short}", "success")
         return True
 
-    flash(f"Restart tac_plus-ng ล้มเหลว: {short_restart}", "error")
+    flash(f"Restart tac_plus-ng ล้มเหลว: {rmsg_short}", "error")
     return False
-
-
 
 
 @bp.route("/")
@@ -169,28 +166,23 @@ def create_device_form():
         flash("Device Group ไม่ถูกต้อง (ไม่พบใน policy.json)", "error")
         return redirect(url_for("devices.index"))
 
-    try:
-        def _mut(policy):
-            devices = policy.get("devices", []) or []
-            if not isinstance(devices, list):
-                devices = []
-            if any(isinstance(d, dict) and d.get("name") == name for d in devices):
-                raise ValueError(f"Device {name} มีอยู่แล้ว")
+    policy = load_policy()
+    devices = policy.get("devices", [])
 
-            devices.append({
-                "name": name,
-                "vendor": vendor,
-                "ip": ip,
-                "group_id": group_id,
-                # Mark as not bootstrapped yet (will show status=Unknown until bootstrap is done)
-                "bootstrap_done": False,
-            })
-            policy["devices"] = devices
-
-        update_policy(_mut)
-    except ValueError as e:
-        flash(str(e), "error")
+    if any(d.get("name") == name for d in devices):
+        flash(f"Device {name} มีอยู่แล้ว", "error")
         return redirect(url_for("devices.index"))
+
+    devices.append({
+        "name": name,
+        "vendor": vendor,
+        "ip": ip,
+        "group_id": group_id,
+        # Mark as not bootstrapped yet (will show status=Unknown until bootstrap is done)
+        "bootstrap_done": False,
+    })
+    policy["devices"] = devices
+    save_policy(policy)
 
     flash(f"เพิ่มอุปกรณ์ {name} เรียบร้อย", "success")
 
@@ -245,17 +237,10 @@ def bootstrap_device_submit(name: str):
         if len(out) > 2500:
             out = "... (truncated)\n" + out[-2400:]
 
-        # Mark device as bootstrapped (persist in policy.json) — safe update under lock
+        # Mark device as bootstrapped (persist in policy.json)
         if not is_preview:
-            def _mut(policy2):
-                devices2 = policy2.get("devices", []) or []
-                for dd in devices2:
-                    if isinstance(dd, dict) and dd.get("name") == name:
-                        dd["bootstrap_done"] = True
-                        break
-                policy2["devices"] = devices2
-
-            update_policy(_mut)
+            dev["bootstrap_done"] = True
+            save_policy(policy)
 
         if is_preview:
             flash(f"Preview Bootstrap (no changes) for {name} ({ip})\n{out}", "info")
@@ -287,14 +272,8 @@ def delete_device_form(name):
         flash(f"ไม่พบอุปกรณ์ {name}", "error")
         return redirect(url_for("devices.index"))
 
-    def _mut(policy2):
-        devices2 = policy2.get("devices", []) or []
-        policy2["devices"] = [
-            dd for dd in devices2
-            if not (isinstance(dd, dict) and dd.get("name") == name)
-        ]
-
-    update_policy(_mut)
+    policy["devices"] = new_devices
+    save_policy(policy)
 
     flash(f"ลบอุปกรณ์ {name} เรียบร้อย", "success")
     return redirect(url_for("devices.index"))
@@ -387,24 +366,18 @@ def edit_device_submit(name):
         flash("Device Group ไม่ถูกต้อง (ไม่พบใน policy.json)", "error")
         return redirect(url_for("devices.edit_device_form", name=name))
 
-    # Apply update under lock on the latest policy to avoid lost updates (multi-user safe)
-    def _mut(policy2):
-        devices2 = policy2.get("devices", []) or []
-        for dd in devices2:
-            if isinstance(dd, dict) and dd.get("name") == name:
-                dd["vendor"] = vendor
-                if ip:
-                    dd["ip"] = ip
-                    # If IP changed, require re-bootstrap (new/changed device)
-                    if ip.strip() and ip.strip() != (old_ip or "").strip():
-                        dd["bootstrap_done"] = False
-                # Stop storing status in policy.json (status is computed at runtime)
-                dd.pop("status", None)
-                dd["group_id"] = group_id
-                break
-        policy2["devices"] = devices2
+    target["vendor"] = vendor
+    if ip:
+        target["ip"] = ip
+        # If IP changed, require re-bootstrap (new/changed device)
+        if ip.strip() and ip.strip() != (old_ip or "").strip():
+            target["bootstrap_done"] = False
 
-    update_policy(_mut)
+    # Stop storing status in policy.json (status is computed at runtime)
+    target.pop("status", None)
+    target["group_id"] = group_id
+
+    save_policy(policy)
     flash("บันทึก Device สำเร็จ", "success")
     return redirect(url_for("devices.index"))
 

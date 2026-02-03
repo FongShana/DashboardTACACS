@@ -16,7 +16,7 @@ from tacacs_dashboard.services.policy_store import (
     is_reserved_olt_username,
 )
 from tacacs_dashboard.services.tacacs_config import _read_env
-from tacacs_dashboard.services.tacacs_apply import apply_tacacs_config
+from tacacs_dashboard.services.tacacs_apply import generate_config_file, check_config_syntax
 from tacacs_dashboard.services.olt_provision import provision_user_on_olt, deprovision_user_on_olt
 from tacacs_dashboard.services.olt_status import get_olt_status
 from tacacs_dashboard.services.access_control import allowed_device_group_ids
@@ -155,35 +155,35 @@ def _restart_tac_plus_ng() -> tuple[bool, str]:
 
 
 def _run_generate_check_restart_and_flash() -> bool:
-    """Generate -> syntax check -> restart tac_plus-ng (serialized)."""
-    r = apply_tacacs_config()
-    path = r.get("config_path", "?")
-    line_count = r.get("line_count", 0)
-    check_ok = bool(r.get("check_ok"))
-    check_msg = (r.get("check_message") or "").strip()
-    restart_ok = bool(r.get("restart_ok"))
-    restart_msg = (r.get("restart_message") or "").strip()
+    """
+    1) generate pass.secret + tacacs-generated.cfg
+    2) syntax check (-P)
+    3) restart tac_plus-ng (ถ้า syntax OK)
+    return True ถ้าทุกอย่าง OK
+    """
+    path, line_count = generate_config_file()
+    ok, message = check_config_syntax(path)
+    short_msg = message if len(message) <= 400 else message[:400] + " ... (truncated)"
 
-    short_check = check_msg if len(check_msg) <= 400 else check_msg[:400] + " ... (truncated)"
-    short_restart = restart_msg if len(restart_msg) <= 400 else restart_msg[:400] + " ... (truncated)"
-
-    if not check_ok:
+    if not ok:
         flash(
-            f"Generate config ที่ {path} แล้ว แต่ syntax check FAILED. Message: {short_check}",
+            f"Generate config ที่ {path} แล้ว แต่ syntax check FAILED. Message: {short_msg}",
             "error",
         )
         return False
 
     flash(
-        f"Generate config สำเร็จ: {path} ({line_count} lines). Syntax check: OK. Message: {short_check}",
+        f"Generate config สำเร็จ: {path} ({line_count} lines). Syntax check: OK. Message: {short_msg}",
         "success",
     )
 
-    if restart_ok:
-        flash(f"Restart tac_plus-ng สำเร็จ: {short_restart}", "success")
+    rok, rmsg = _restart_tac_plus_ng()
+    rmsg_short = rmsg if len(rmsg) <= 400 else rmsg[:400] + " ... (truncated)"
+    if rok:
+        flash(f"Restart tac_plus-ng สำเร็จ: {rmsg_short}", "success")
         return True
 
-    flash(f"Restart tac_plus-ng ล้มเหลว: {short_restart}", "error")
+    flash(f"Restart tac_plus-ng ล้มเหลว: {rmsg_short}", "error")
     return False
 
 
@@ -593,20 +593,15 @@ def create_user_form():
     if raw_target_ips and len(target_ips) != len(raw_target_ips):
         flash("บาง OLT ที่เลือกถูกตัดออก (อยู่นอก scope หรือ Offline) — ระบบจะใช้เฉพาะ OLT ที่ Online ใน scope เท่านั้น", "warning")
 
-        try:
-            upsert_user(
-                username=username,
-                role=role,
-                status=status,
-                device_group_ids=device_group_ids,
-                target_olt_ips=target_ips,
-                first_name=first_name,
-                last_name=last_name,
-                create_only=True,
-            )
-        except ValueError as e:
-            flash(str(e), "error")
-            return redirect(url_for("users.index"))
+    upsert_user(
+        username=username,
+        role=role,
+        status=status,
+        device_group_ids=device_group_ids,
+        target_olt_ips=target_ips,
+        first_name=first_name,
+        last_name=last_name,
+    )
     flash(f"เพิ่มผู้ใช้ {username} เรียบร้อย", "success")
 
     if password:
@@ -801,20 +796,15 @@ def edit_user_submit(username):
         flash(f"Role {new_role} ไม่มีอยู่ในระบบ", "error")
         return redirect(url_for("users.edit_user_form", username=username))
 
-        try:
-            upsert_user(
-                username=username,
-                role=new_role,
-                status=new_status,
-                device_group_ids=device_group_ids_to_set,
-                target_olt_ips=target_ips,
-                first_name=new_first_name,
-                last_name=new_last_name,
-                update_only=True,
-            )
-        except ValueError as e:
-            flash(str(e), "error")
-            return redirect(url_for("users.index"))
+    upsert_user(
+        username=username,
+        role=new_role,
+        status=new_status,
+        device_group_ids=device_group_ids_to_set,
+        target_olt_ips=target_ips,
+        first_name=new_first_name,
+        last_name=new_last_name,
+    )
     flash(f"อัปเดตผู้ใช้ {username} เรียบร้อยแล้ว", "success")
 
     ok = _run_generate_check_restart_and_flash()
@@ -908,6 +898,5 @@ def edit_role_submit(name):
     flash(f"อัปเดต Role {name} เรียบร้อยแล้ว", "success")
     _run_generate_check_restart_and_flash()
     return redirect(url_for("users.index"))
-
 
 

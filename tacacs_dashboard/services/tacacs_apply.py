@@ -4,8 +4,6 @@ from pathlib import Path
 import subprocess
 import os
 
-from .locks import file_lock
-
 from .tacacs_config import (
     build_config_text,
     build_pass_secret_text,
@@ -118,45 +116,4 @@ def restart_tacacs_daemon() -> tuple[bool, str]:
         return False, msg
     except Exception as e:
         return False, str(e)
-
-
-
-def apply_tacacs_config(config_path: Path | str = DEFAULT_CONFIG_PATH) -> dict:
-    """Generate -> syntax check -> restart under a single cross-process lock.
-
-    Returns dict:
-      {
-        "ok": bool,
-        "config_path": str,
-        "line_count": int,
-        "check_ok": bool,
-        "check_message": str,
-        "restart_ok": bool,
-        "restart_message": str,
-      }
-    """
-    with file_lock("tacacs_apply", timeout=120):
-        cfg_path, line_count = generate_config_file(config_path)
-        check_ok, check_msg = check_config_syntax(cfg_path)
-        if not check_ok:
-            return {
-                "ok": False,
-                "config_path": str(cfg_path),
-                "line_count": int(line_count),
-                "check_ok": False,
-                "check_message": str(check_msg),
-                "restart_ok": False,
-                "restart_message": "",
-            }
-
-        restart_ok, restart_msg = restart_tacacs_daemon()
-        return {
-            "ok": bool(restart_ok),
-            "config_path": str(cfg_path),
-            "line_count": int(line_count),
-            "check_ok": True,
-            "check_message": str(check_msg),
-            "restart_ok": bool(restart_ok),
-            "restart_message": str(restart_msg),
-        }
 

@@ -4,8 +4,6 @@ from pathlib import Path
 import json
 from typing import Any, Dict, List, Optional
 
-from .locks import file_lock
-
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 POLICY_PATH = BASE_DIR / "policy.json"
 
@@ -47,23 +45,6 @@ def save_policy(policy: Dict[str, Any]) -> None:
     tmp.replace(POLICY_PATH)
 
 
-
-
-
-def update_policy(mutator, *, save: bool = True):
-    """Concurrency-safe policy update helper.
-
-    - Acquires a cross-process file lock (works across Gunicorn workers/processes).
-    - Loads policy.json, calls mutator(policy), then writes back atomically.
-    - mutator may return a truthy value to indicate changes; return value is passed through.
-    """
-    with file_lock("policy"):
-        policy = load_policy()
-        result = mutator(policy)
-        if save:
-            save_policy(policy)
-        return result
-
 def upsert_user(
     username: str,
     role: str,
@@ -72,16 +53,9 @@ def upsert_user(
     target_olt_ips: Optional[List[str]] = None,
     first_name: Optional[str] = None,
     last_name: Optional[str] = None,
-    *,
-    create_only: bool = False,
-    update_only: bool = False,
 ) -> bool:
     """
     return True = created, False = updated
-
-    Concurrency-safe:
-    - Entire read-modify-write happens under a cross-process lock.
-    - Optional flags help prevent accidental overwrite under concurrent usage.
     """
     username = (username or "").strip()
     if not username:
@@ -89,6 +63,9 @@ def upsert_user(
 
     role = (role or "OLT_VIEW").strip() or "OLT_VIEW"
     status = (status or "Active").strip() or "Active"
+
+    policy = load_policy()
+    users = policy.setdefault("users", [])
 
     # normalize group ids if provided
     gids: Optional[List[str]] = None
@@ -118,80 +95,63 @@ def upsert_user(
     fn = None if first_name is None else (first_name or "").strip()
     ln = None if last_name is None else (last_name or "").strip()
 
-    def _mut(policy: Dict[str, Any]) -> bool:
-        users = policy.setdefault("users", [])
-        if not isinstance(users, list):
-            users = []
-            policy["users"] = users
+    for u in users:
+        if (u.get("username") or "").strip() == username:
+            u["roles"] = role      # ใช้ key 'roles' ตาม policy ของคุณ
+            u["status"] = status
+            u.setdefault("last_login", "-")
 
-        # update path
-        for u in users:
-            if not isinstance(u, dict):
-                continue
-            if (u.get("username") or "").strip() == username:
-                if create_only:
-                    raise ValueError(f"user already exists: {username}")
+            # Optional fields: first_name / last_name
+            # - If caller passes None: don't touch existing
+            # - If caller passes empty string: remove key
+            if fn is not None:
+                if fn:
+                    u["first_name"] = fn
+                else:
+                    u.pop("first_name", None)
+            if ln is not None:
+                if ln:
+                    u["last_name"] = ln
+                else:
+                    u.pop("last_name", None)
 
-                u["roles"] = role      # ใช้ key 'roles' ตาม policy ของคุณ
-                u["status"] = status
-                u.setdefault("last_login", "-")
+            # Optional field: target_olt_ips
+            # - If caller passes None: don't touch existing
+            # - If caller passes []: remove key (meaning: all OLTs in scope)
+            if ips is not None:
+                if clear_target_ips:
+                    u.pop("target_olt_ips", None)
+                else:
+                    u["target_olt_ips"] = ips
 
-                # Optional fields: first_name / last_name
-                # - If caller passes None: don't touch existing
-                # - If caller passes empty string: remove key
-                if fn is not None:
-                    if fn:
-                        u["first_name"] = fn
-                    else:
-                        u.pop("first_name", None)
-                if ln is not None:
-                    if ln:
-                        u["last_name"] = ln
-                    else:
-                        u.pop("last_name", None)
+            if gids is not None:
+                if clear_device_groups:
+                    u.pop("device_group_ids", None)
+                else:
+                    u["device_group_ids"] = gids
+            save_policy(policy)
+            return False
 
-                # Optional field: target_olt_ips
-                # - If caller passes None: don't touch existing
-                # - If caller passes []: remove key (meaning: all OLTs in scope)
-                if ips is not None:
-                    if clear_target_ips:
-                        u.pop("target_olt_ips", None)
-                    else:
-                        u["target_olt_ips"] = ips
+    rec: Dict[str, Any] = {
+        "username": username,
+        "roles": role,
+        "status": status,
+        "last_login": "-",
+    }
+    if fn:
+        rec["first_name"] = fn
+    if ln:
+        rec["last_name"] = ln
+    if gids is not None and not clear_device_groups:
+        rec["device_group_ids"] = gids
 
-                if gids is not None:
-                    if clear_device_groups:
-                        u.pop("device_group_ids", None)
-                    else:
-                        u["device_group_ids"] = gids
+    # Save only when explicitly set and non-empty
+    if ips is not None and not clear_target_ips:
+        rec["target_olt_ips"] = ips
 
-                return False  # updated
-
-        if update_only:
-            raise ValueError(f"user not found: {username}")
-
-        # create path
-        rec: Dict[str, Any] = {
-            "username": username,
-            "roles": role,
-            "status": status,
-            "last_login": "-",
-        }
-        if fn:
-            rec["first_name"] = fn
-        if ln:
-            rec["last_name"] = ln
-        if gids is not None and not clear_device_groups:
-            rec["device_group_ids"] = gids
-
-        # Save only when explicitly set and non-empty
-        if ips is not None and not clear_target_ips:
-            rec["target_olt_ips"] = ips
-
-        users.append(rec)
-        return True  # created
-
-    return update_policy(_mut)
+    users.append(rec)
+    save_policy(policy)
+    return True
 
 
 def delete_user(username: str) -> bool:
@@ -199,15 +159,14 @@ def delete_user(username: str) -> bool:
     if not username:
         return False
 
-    def _mut(policy: Dict[str, Any]) -> bool:
-        users = policy.get("users", [])
-        if not isinstance(users, list):
-            return False
-        before = len(users)
-        policy["users"] = [u for u in users if not (isinstance(u, dict) and (u.get("username") or "").strip() == username)]
-        return len(policy["users"]) != before
+    policy = load_policy()
+    users = policy.get("users", [])
+    before = len(users)
+    policy["users"] = [u for u in users if (u.get("username") or "").strip() != username]
+    if len(policy["users"]) == before:
+        return False
 
-    return bool(update_policy(_mut))
-
+    save_policy(policy)
+    return True
 
 
