@@ -1,16 +1,69 @@
 from __future__ import annotations
 
+import time
 from collections import Counter
 
 from flask import Blueprint, render_template, request, redirect, url_for
 
 from tacacs_dashboard.services.log_parser import (
+    LOG_DIR,
     get_recent_events,
     get_command_events,
 )
 
 
 bp = Blueprint("logs", __name__)
+
+
+# -----------------------------
+# Micro-cache for /logs/auth
+# -----------------------------
+# Keep it short to preserve "near real-time" behavior while avoiding repeated
+# heavy log parsing when multiple users refresh frequently.
+_AUTH_CACHE_TTL_SECONDS = 2  # seconds
+
+# Per-process (per gunicorn worker) cache:
+# {"ts": float, "mtime": float, "events": list[dict]}
+_AUTH_CACHE = {"ts": 0.0, "mtime": 0.0, "events": []}
+
+
+def _auth_logs_mtime() -> float:
+    """Return newest mtime among auth/session log sources.
+
+    We use this to invalidate cache immediately when new TACACS logs arrive.
+    """
+    if not LOG_DIR.exists():
+        return 0.0
+
+    latest = 0.0
+    for pat in ("authc-*.log", "authz-*.log", "acct-*.log"):
+        for p in LOG_DIR.glob(pat):
+            try:
+                mt = p.stat().st_mtime
+                if mt > latest:
+                    latest = mt
+            except OSError:
+                continue
+    return latest
+
+
+def _get_recent_auth_events_cached(limit: int = 200) -> list[dict]:
+    """Cached wrapper for get_recent_events used by /logs/auth."""
+    now = time.time()
+    cur_mtime = _auth_logs_mtime()
+
+    ts = float(_AUTH_CACHE.get("ts") or 0.0)
+    cached_mtime = float(_AUTH_CACHE.get("mtime") or 0.0)
+    cached_events = _AUTH_CACHE.get("events") or []
+
+    if cached_events and (now - ts) < _AUTH_CACHE_TTL_SECONDS and cur_mtime <= cached_mtime:
+        return cached_events
+
+    events = get_recent_events(limit=limit)
+    _AUTH_CACHE["ts"] = now
+    _AUTH_CACHE["mtime"] = cur_mtime
+    _AUTH_CACHE["events"] = events
+    return events
 
 
 def _get_auth_filters() -> tuple[str, str, str]:
@@ -52,7 +105,7 @@ def auth():
     cmd_user_filter, cmd_device_filter, cmd_contains_filter = _get_cmd_filters()
 
     # Parse only auth/session logs for this page
-    recent_events = get_recent_events(limit=200)
+    recent_events = _get_recent_auth_events_cached(limit=200)
 
     # Dropdown lists
     user_list = sorted({e.get("user") for e in recent_events if e.get("user")})
@@ -179,4 +232,5 @@ def command():
         device_filter=device_filter,
         result_filter=result_filter,
     )
+
 
