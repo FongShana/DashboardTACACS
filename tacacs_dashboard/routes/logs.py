@@ -16,27 +16,28 @@ bp = Blueprint("logs", __name__)
 
 
 # -----------------------------
-# Micro-cache for /logs/auth
+# Micro-caches for /logs/*
 # -----------------------------
-# Keep it short to preserve "near real-time" behavior while avoiding repeated
-# heavy log parsing when multiple users refresh frequently.
-_AUTH_CACHE_TTL_SECONDS = 2  # seconds
+# These caches are intentionally short to preserve "near real-time" refresh while
+# reducing repeated heavy log parsing when multiple users refresh frequently.
+#
+# NOTE: caches are per gunicorn worker process (normal for gunicorn).
 
-# Per-process (per gunicorn worker) cache:
+_AUTH_CACHE_TTL_SECONDS = 2  # seconds
+_CMD_CACHE_TTL_SECONDS = 2   # seconds
+
+# Cache shapes:
 # {"ts": float, "mtime": float, "events": list[dict]}
 _AUTH_CACHE = {"ts": 0.0, "mtime": 0.0, "events": []}
+_CMD_CACHE = {"ts": 0.0, "mtime": 0.0, "events": []}
 
 
-def _auth_logs_mtime() -> float:
-    """Return newest mtime among auth/session log sources.
-
-    We use this to invalidate cache immediately when new TACACS logs arrive.
-    """
+def _latest_mtime(patterns: tuple[str, ...]) -> float:
     if not LOG_DIR.exists():
         return 0.0
 
     latest = 0.0
-    for pat in ("authc-*.log", "authz-*.log", "acct-*.log"):
+    for pat in patterns:
         for p in LOG_DIR.glob(pat):
             try:
                 mt = p.stat().st_mtime
@@ -50,7 +51,7 @@ def _auth_logs_mtime() -> float:
 def _get_recent_auth_events_cached(limit: int = 200) -> list[dict]:
     """Cached wrapper for get_recent_events used by /logs/auth."""
     now = time.time()
-    cur_mtime = _auth_logs_mtime()
+    cur_mtime = _latest_mtime(("authc-*.log", "authz-*.log", "acct-*.log"))
 
     ts = float(_AUTH_CACHE.get("ts") or 0.0)
     cached_mtime = float(_AUTH_CACHE.get("mtime") or 0.0)
@@ -63,6 +64,25 @@ def _get_recent_auth_events_cached(limit: int = 200) -> list[dict]:
     _AUTH_CACHE["ts"] = now
     _AUTH_CACHE["mtime"] = cur_mtime
     _AUTH_CACHE["events"] = events
+    return events
+
+
+def _get_recent_cmd_events_cached(limit: int = 200) -> list[dict]:
+    """Cached wrapper for get_command_events used by /logs/command (fast mode only)."""
+    now = time.time()
+    cur_mtime = _latest_mtime(("acct-*.log",))
+
+    ts = float(_CMD_CACHE.get("ts") or 0.0)
+    cached_mtime = float(_CMD_CACHE.get("mtime") or 0.0)
+    cached_events = _CMD_CACHE.get("events") or []
+
+    if cached_events and (now - ts) < _CMD_CACHE_TTL_SECONDS and cur_mtime <= cached_mtime:
+        return cached_events
+
+    events = get_command_events(limit=limit, scan_all=False, user="", device="", contains="")
+    _CMD_CACHE["ts"] = now
+    _CMD_CACHE["mtime"] = cur_mtime
+    _CMD_CACHE["events"] = events
     return events
 
 
@@ -180,13 +200,17 @@ def command():
     # - default = recent (fast)
     # - if any cmd filter provided -> scan all acct logs (bounded top-N by timestamp)
     scan_all_cmd = bool(cmd_user_filter or cmd_device_filter or cmd_contains_filter)
-    command_events = get_command_events(
-        limit=1600 if scan_all_cmd else 200,
-        scan_all=scan_all_cmd,
-        user=cmd_user_filter,
-        device=cmd_device_filter,
-        contains=cmd_contains_filter,
-    )
+    if scan_all_cmd:
+        command_events = get_command_events(
+            limit=1600,
+            scan_all=True,
+            user=cmd_user_filter,
+            device=cmd_device_filter,
+            contains=cmd_contains_filter,
+        )
+    else:
+        # Fast mode: micro-cache (mtime-aware) to reduce repeated parsing on refresh storms
+        command_events = _get_recent_cmd_events_cached(limit=200)
 
     # Dropdown lists
     cmd_user_list = sorted({e.get("user") for e in command_events if e.get("user")})
