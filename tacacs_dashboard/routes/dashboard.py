@@ -9,11 +9,10 @@ from tacacs_dashboard.services.policy_store import load_policy
 bp = Blueprint("dashboard", __name__)
 
 
-def _build_user_role_map() -> dict[str, str]:
+def _build_user_role_map(policy: dict) -> dict[str, str]:
     """
     map username -> role จาก policy.json
     """
-    policy = load_policy()
     m: dict[str, str] = {}
     for u in (policy.get("users") or []):
         name = (u.get("username") or "").strip()
@@ -29,8 +28,11 @@ def index():
     # อ่าน event เยอะหน่อยเพื่อคำนวณ summary (แล้วค่อยตัดไปโชว์ตาราง)
     all_events = get_recent_events(limit=2000)
 
+    # โหลด policy ครั้งเดียว
+    policy = load_policy()
+
     # เติม role ให้แต่ละ event จาก policy.json
-    role_map = _build_user_role_map()
+    role_map = _build_user_role_map(policy)
     for e in all_events:
         user = (e.get("user") or "").strip()
         e["role"] = role_map.get(user, "-")
@@ -38,6 +40,14 @@ def index():
     # -----------------------
     # ✅ สร้าง summary ให้ตรงกับ dashboard.html
     # -----------------------
+    # 0) All TACACS+ Users = จำนวน user ทั้งหมดจาก policy.json
+    policy_users = [
+        u
+        for u in (policy.get("users") or [])
+        if isinstance(u, dict) and (u.get("username") or "").strip()
+    ]
+    all_users_count = len(policy_users)
+
     # 1) Recent TACACS+ Users = จำนวน user ที่ login สำเร็จ (นับ unique)
     recent_login_users = {
         (e.get("user") or "").strip()
@@ -74,6 +84,7 @@ def index():
     roles_count = len(roles)
 
     summary = {
+        "all_users": all_users_count,
         "recent_users": recent_users_count,
         "failed_logins": failed_logins_count,
         "devices": devices_count,
@@ -89,4 +100,5 @@ def index():
         summary=summary,
         events=events,
     )
+
 
