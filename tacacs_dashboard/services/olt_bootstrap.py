@@ -1,28 +1,7 @@
 # tacacs_dashboard/services/olt_bootstrap.py
 from __future__ import annotations
 
-"""Bootstrap an OLT with the AAA templates used by this dashboard.
-
-Scope (by design):
-- Configure AAA templates (default ID=2128) as tacacs-local
-- Bind system-user templates (default ID=128) to those AAA templates
-- Optionally `write` to save running-config
-
-This intentionally does *not* touch global TACACS settings (tacacs enable,
-source-interface vlanXX, tacacs-server host, group-server, etc.) because those
-require site/VLAN-specific information and are safer to do manually first.
-
-Environment overrides (secret.env):
-- OLT_TACACS_GROUP=zte1
-- OLT_AAA_TEMPLATE_ID=2128
-- OLT_SYSTEM_USER_TEMPLATE_ID=128
-- OLT_CLI_EXIT_STYLE=exit   (or set to '$' if your ZTE CLI prefers "$" to exit a block)
-- OLT_TELNET_TIMEOUT=8
-- OLT_ADMIN_USER=zte
-- OLT_ADMIN_PASSWORD=...
-- OLT_ENABLE15_PASSWORD=...  (optional)
-- TACACS_ENABLE_PASSWORD=... (fallback)
-"""
+"""Bootstrap an OLT with the AAA templates used by this dashboard."""
 
 from typing import List, Optional
 
