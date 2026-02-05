@@ -32,16 +32,69 @@
   <form method="post" action="{{ url_for('users.zte_template_switch') }}" class="form-card">
     <div class="form-grid">
       <div class="form-row">
+        <label for="olt_group">Device Group</label>
+        <select class="input" id="olt_group" name="olt_group" required>
+          <option value="">-- Select a Device Group --</option>
+          {% set seen = namespace(gids=[]) %}
+          {% for d in devices %}
+            {% set gid = (d.group_id or '') %}
+            {% if gid and gid not in seen.gids %}
+              {% set _ = seen.gids.append(gid) %}
+              <option value="{{ gid }}">{{ d.group_label }}</option>
+            {% endif %}
+          {% endfor %}
+          <option value="__ALL__">All groups</option>
+        </select>
+        <div class="hint">เลือก group ก่อน แล้วค่อยเลือก OLT IP</div>
+      </div>
+
+      <div class="form-row">
         <label for="olt_ip">OLT IP</label>
-        <select class="input" id="olt_ip" name="olt_ip" required>
+        <select class="input" id="olt_ip" name="olt_ip" required disabled>
           <option value="">-- Select an online OLT --</option>
           {% for d in devices %}
-            <option value="{{ d.ip }}">{{ d.ip }} • {{ d.name }} • {{ d.group_label }}</option>
+            <option value="{{ d.ip }}" data-gid="{{ d.group_id }}">{{ d.ip }} • {{ d.name }} • {{ d.group_label }}</option>
           {% endfor %}
         </select>
         <div class="hint">แสดงเฉพาะ OLT ที่สถานะ online และ bootstrap_done แล้ว</div>
       </div>
     </div>
+
+    <script>
+      (function () {
+        const selGroup = document.getElementById('olt_group');
+        const selIp = document.getElementById('olt_ip');
+        if (!selGroup || !selIp) return;
+
+        const allOptions = Array.from(selIp.querySelectorAll('option'));
+        const placeholder = allOptions[0];
+
+        function applyFilter() {
+          const gid = selGroup.value;
+          // reset selection
+          selIp.value = '';
+          // enable only when group chosen
+          selIp.disabled = !(gid && gid.length);
+
+          // show/hide options
+          allOptions.forEach((opt, idx) => {
+            if (idx === 0) { opt.hidden = false; return; } // placeholder always visible
+            const og = opt.getAttribute('data-gid') || '';
+            if (gid === '__ALL__') {
+              opt.hidden = false;
+            } else {
+              opt.hidden = (og.toLowerCase() !== gid.toLowerCase());
+            }
+          });
+
+          // If group is __ALL__, allow selection immediately
+          if (gid === '__ALL__') selIp.disabled = false;
+        }
+
+        selGroup.addEventListener('change', applyFilter);
+        applyFilter();
+      })();
+    </script>
 
     <div style="display:flex; gap:0.75rem; margin-top:0.75rem; flex-wrap:wrap;">
       <button type="submit" name="mode" value="to128" class="btn btn-danger">
