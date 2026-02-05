@@ -482,6 +482,8 @@ def index():
 
 
     # --- UI sort: Device Group -> Role -> Username ---
+    prov_user = _get_provision_user().strip().lower()
+
     # Group order follows device_groups list order in policy.json (stable, user-friendly)
     group_order = {}
     for i, g in enumerate(device_groups):
@@ -498,14 +500,19 @@ def index():
         return r
 
     def _user_sort_key(u):
+        # Always pin provisioning service-account to the top if present
         if not isinstance(u, dict):
-            return (9999, 1, "zzzz", "zzzz")
+            return (1, 9999, 1, "zzzz", "zzzz")
+
         uname = (u.get("username") or u.get("name") or "").strip().lower()
+        if prov_user and uname == prov_user:
+            return (0,)
+
         gid = _primary_gid(u).lower()
         unscoped = 1 if not gid else 0  # put legacy/unscoped at the end
         gidx = group_order.get(gid, 9999)
         role = _role_key(u)
-        return (gidx, unscoped, role, uname)
+        return (1, gidx, unscoped, role, uname)
 
     users.sort(key=_user_sort_key)
 
@@ -943,4 +950,5 @@ def edit_role_submit(name):
     flash(f"อัปเดต Role {name} เรียบร้อยแล้ว", "success")
     _run_generate_check_restart_and_flash()
     return redirect(url_for("users.index"))
+
 
