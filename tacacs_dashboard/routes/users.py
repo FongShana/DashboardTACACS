@@ -17,11 +17,7 @@ from tacacs_dashboard.services.policy_store import (
 )
 from tacacs_dashboard.services.tacacs_config import _read_env
 from tacacs_dashboard.services.tacacs_apply import generate_check_restart
-from tacacs_dashboard.services.olt_provision import (
-    provision_user_on_olt,
-    deprovision_user_on_olt,
-    switch_user_templates_on_olt,
-)
+from tacacs_dashboard.services.olt_provision import provision_user_on_olt, deprovision_user_on_olt
 from tacacs_dashboard.services.olt_status import get_olt_status
 from tacacs_dashboard.services.access_control import allowed_device_group_ids
 
@@ -55,6 +51,13 @@ def _normalize_gid_list(value) -> list[str]:
         if gg and gg not in out:
             out.append(gg)
     return out
+
+
+
+def _get_provision_user() -> str:
+    """Return provisioning service-account username from secret.env (default: tac_prov)."""
+    u = (_read_env("OLT_PROVISION_USER", "tac_prov") or "tac_prov").strip()
+    return u or "tac_prov"
 
 
 def _normalize_ip_list(value) -> list[str]:
@@ -408,15 +411,6 @@ def index():
     # Scope admin view to device groups (users without device_group_ids are treated as out of scope)
     _role, _web_uname, allowed_gids = _current_scope()
     is_superadmin = (_role == "superadmin")
-    provisioning_username = (_read_env("OLT_PROVISION_USER", "tac_prov") or "tac_prov").strip()
-
-    active_tab = (request.args.get("tab") or "overview").strip().lower()
-    if active_tab not in ("overview", "zte"):
-        active_tab = "overview"
-    # Only superadmin can access the zte emergency tab
-    if active_tab == "zte" and not is_superadmin:
-        active_tab = "overview"
-        flash("สิทธิ์ไม่เพียงพอสำหรับเมนู Emergency (zte template)", "error")
     if allowed_gids is not None:
         if not allowed_gids:
             flash("บัญชี admin นี้ยังไม่ได้ถูกกำหนด Device Group — กรุณาให้ superadmin กำหนดก่อน", "warning")
@@ -518,58 +512,14 @@ def index():
 
     return render_template(
         "users.html",
+        provision_user=_get_provision_user(),
         users=users,
         roles=roles,
         device_groups=device_groups,
         devices=devices_for_form,
         is_superadmin=is_superadmin,
         active_page="users",
-        active_tab=active_tab,
-        provisioning_username=provisioning_username,
     )
-
-
-@bp.post("/zte-template-switch")
-def zte_template_switch():
-    # Superadmin only: very sensitive
-    role, _web_uname, _allowed = _current_scope()
-    if role != "superadmin":
-        flash("สิทธิ์ไม่เพียงพอ", "error")
-        return redirect(url_for("users.index"))
-
-    olt_ip = (request.form.get("olt_ip") or "").strip()
-    mode = (request.form.get("mode") or "").strip().lower()
-    do_write = (request.form.get("write") or "").strip() == "1"
-
-    if not olt_ip:
-        flash("กรุณาเลือก IP ของ OLT", "error")
-        return redirect(url_for("users.index", tab="zte"))
-
-    if mode not in ("to128", "to1"):
-        flash("คำสั่งไม่ถูกต้อง", "error")
-        return redirect(url_for("users.index", tab="zte"))
-
-    # zte account template toggle
-    if mode == "to128":
-        auth_t, author_t = "128", "128"
-        label = "zte → template 128"
-    else:
-        auth_t, author_t = "1", "1"
-        label = "zte → template 1"
-
-    try:
-        out = switch_user_templates_on_olt(
-            olt_ip=olt_ip,
-            username="zte",
-            auth_template=auth_t,
-            author_template=author_t,
-            save=False,
-        )
-        flash(f"สำเร็จ: {label} ที่ {olt_ip}", "success")
-    except Exception as e:
-        flash(f"ล้มเหลว: {label} ที่ {olt_ip} — {e}", "error")
-
-    return redirect(url_for("users.index", tab="zte"))
 
 
 # -----------------------
@@ -600,14 +550,6 @@ def create_user_form():
     # ✅ Scope: admin สามารถสร้าง user ได้เฉพาะใน OLT ที่อยู่ใน Device Group ของตัวเองเท่านั้น
     _role, _web_uname, allowed_gids = _current_scope()
     is_superadmin = (_role == "superadmin")
-
-    active_tab = (request.args.get("tab") or "overview").strip().lower()
-    if active_tab not in ("overview", "zte"):
-        active_tab = "overview"
-    # Only superadmin can access the zte emergency tab
-    if active_tab == "zte" and not is_superadmin:
-        active_tab = "overview"
-        flash("สิทธิ์ไม่เพียงพอสำหรับเมนู Emergency (zte template)", "error")
 
     # device group scoping for TACACS users:
     # - admin: forced to their own allowed_gids
@@ -701,9 +643,9 @@ def delete_user_form(username: str):
         flash("username ไม่ถูกต้อง", "error")
         return redirect(url_for("users.index"))
 
-    provisioning_username = (_read_env("OLT_PROVISION_USER", "tac_prov") or "tac_prov").strip()
-    if provisioning_username and username.lower() == provisioning_username.lower():
-        flash(f"ห้ามลบบัญชี provisioning ({provisioning_username})", "error")
+    prov_user = _get_provision_user()
+    if username.lower() == prov_user.lower():
+        flash(f"ห้ามลบบัญชี provisioning ({prov_user})", "error")
         return redirect(url_for("users.index"))
 
     policy = load_policy()
@@ -717,6 +659,13 @@ def delete_user_form(username: str):
     if not target:
         flash(f"ไม่พบผู้ใช้ {username}", "error")
         return redirect(url_for("users.index"))
+
+    # Protect provisioning account: disallow role changes
+    existing_role = (target.get("roles") or target.get("role") or "").strip()
+    if is_prov:
+        if new_role and new_role != existing_role:
+            flash("บัญชี provisioning ถูกล็อก: ไม่อนุญาตให้เปลี่ยน Role", "warning")
+        new_role = existing_role
 
     # ✅ Scope check: admin ลบได้เฉพาะ user ที่อยู่ใน device groups ของตัวเอง
     _role, _web_uname, allowed_gids = _current_scope()
@@ -763,16 +712,6 @@ def edit_user_form(username):
     # ✅ Scope check: admin แก้ไขได้เฉพาะ user ใน Device Group ของตัวเอง
     _role, _web_uname, allowed_gids = _current_scope()
     is_superadmin = (_role == "superadmin")
-    provisioning_username = (_read_env("OLT_PROVISION_USER", "tac_prov") or "tac_prov").strip()
-    is_provisioning_user = bool(provisioning_username) and (username or "").strip().lower() == provisioning_username.strip().lower()
-
-    active_tab = (request.args.get("tab") or "overview").strip().lower()
-    if active_tab not in ("overview", "zte"):
-        active_tab = "overview"
-    # Only superadmin can access the zte emergency tab
-    if active_tab == "zte" and not is_superadmin:
-        active_tab = "overview"
-        flash("สิทธิ์ไม่เพียงพอสำหรับเมนู Emergency (zte template)", "error")
     if allowed_gids is not None and not _user_in_scope(target, allowed_gids):
         flash("คุณไม่มีสิทธิ์แก้ไขผู้ใช้นี้ (อยู่นอก Device Group ของคุณ)", "error")
         return redirect(url_for("users.index"))
@@ -788,7 +727,6 @@ def edit_user_form(username):
     return render_template(
         "user_edit.html",
         active_page="users",
-        active_tab=active_tab,
         user=target,
         roles=roles,
         device_groups=device_groups,
@@ -797,8 +735,6 @@ def edit_user_form(username):
         selected_target_olt_ips=selected_target_olt_ips,
         is_superadmin=is_superadmin,
         current_role=current_role,
-        provisioning_username=provisioning_username,
-        is_provisioning_user=is_provisioning_user,
     )
 
 
@@ -815,7 +751,19 @@ def edit_user_submit(username):
     # Optional fields (backward compatible)
     new_first_name = (request.form.get("first_name") or "").strip()
     new_last_name = (request.form.get("last_name") or "").strip()
+
     new_password = (request.form.get("password") or "").strip()
+
+    prov_user = _get_provision_user()
+    is_prov = (username or "").strip().lower() == prov_user.lower()
+
+    # Protect provisioning account: disallow password changes
+    if is_prov and new_password:
+        flash("บัญชี provisioning ถูกล็อก: ไม่อนุญาตให้เปลี่ยน password", "warning")
+        new_password = ""
+
+    if new_password and not is_prov:
+        set_user_password(username, new_password)
 
     policy = load_policy()
     users = policy.get("users", [])
@@ -831,38 +779,12 @@ def edit_user_submit(username):
         flash(f"ไม่พบผู้ใช้ {username}", "error")
         return redirect(url_for("users.index"))
 
-    provisioning_username = (_read_env("OLT_PROVISION_USER", "tac_prov") or "tac_prov").strip()
-    is_provisioning_user = bool(provisioning_username) and username.lower() == provisioning_username.lower()
-    current_role = (target.get("roles") or target.get("role") or "").strip()
-
-    # Protect provisioning account: do not allow role/password changes from UI
-    if is_provisioning_user:
-        if new_password:
-            flash("บัญชี provisioning ไม่อนุญาตให้เปลี่ยนรหัสผ่านจากหน้าเว็บ", "warning")
-        new_password = ""
-        if new_role and (new_role.strip() != current_role):
-            flash("บัญชี provisioning ไม่อนุญาตให้เปลี่ยน Role จากหน้าเว็บ", "warning")
-        # If role field is missing/disabled, keep existing role
-        new_role = current_role
-
-    # Apply password change (non-provisioning users only)
-    if new_password:
-        set_user_password(username, new_password)
-
     existing_gids = _normalize_gid_list(target.get("device_group_ids"))
     existing_target_ips = _normalize_ip_list(target.get("target_olt_ips"))
 
     # ✅ Scope check (admin)
     _role, _web_uname, allowed_gids = _current_scope()
     is_superadmin = (_role == "superadmin")
-
-    active_tab = (request.args.get("tab") or "overview").strip().lower()
-    if active_tab not in ("overview", "zte"):
-        active_tab = "overview"
-    # Only superadmin can access the zte emergency tab
-    if active_tab == "zte" and not is_superadmin:
-        active_tab = "overview"
-        flash("สิทธิ์ไม่เพียงพอสำหรับเมนู Emergency (zte template)", "error")
 
     # device_group_ids update:
     # - admin: cannot change scope; if user has no device_group_ids, it will be scoped to admin's groups on first edit
@@ -977,7 +899,6 @@ def edit_role_form(name):
     return render_template(
         "role_edit.html",
         active_page="users",
-        active_tab=active_tab,
         role=target,
     )
 
@@ -1022,5 +943,4 @@ def edit_role_submit(name):
     flash(f"อัปเดต Role {name} เรียบร้อยแล้ว", "success")
     _run_generate_check_restart_and_flash()
     return redirect(url_for("users.index"))
-
 
