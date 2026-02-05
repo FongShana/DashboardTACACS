@@ -62,6 +62,7 @@ def build_bootstrap_commands(
 
         f"authorization-template {sys_id}",
         f"bind aaa-authorization-template {aaa_id}",
+        "local-privilege-level 15",
         x,
 
         f"authentication-template {sys_id}",
