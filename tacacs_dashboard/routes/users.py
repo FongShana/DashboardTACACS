@@ -647,6 +647,12 @@ def delete_user_form(username: str):
         flash(f"ไม่พบผู้ใช้ {username}", "error")
         return redirect(url_for("users.index"))
 
+    # 🔒 Safety: protect provisioning account from accidental deletion
+    prov_user = (_read_env("OLT_PROVISION_USER", "") or "").strip()
+    if prov_user and username.strip().lower() == prov_user.lower():
+        flash(f"ห้ามลบผู้ใช้ provisioning account '{username}' (ตั้งค่าใน OLT_PROVISION_USER)", "error")
+        return redirect(url_for("users.index"))
+
     # ✅ Scope check: admin ลบได้เฉพาะ user ที่อยู่ใน device groups ของตัวเอง
     _role, _web_uname, allowed_gids = _current_scope()
     if allowed_gids is not None and not _user_in_scope(target, allowed_gids):
@@ -687,6 +693,12 @@ def edit_user_form(username):
 
     if not target:
         flash(f"ไม่พบผู้ใช้ {username}", "error")
+        return redirect(url_for("users.index"))
+
+    # 🔒 Safety: protect provisioning account from accidental deletion
+    prov_user = (_read_env("OLT_PROVISION_USER", "") or "").strip()
+    if prov_user and username.strip().lower() == prov_user.lower():
+        flash(f"ห้ามลบผู้ใช้ provisioning account '{username}' (ตั้งค่าใน OLT_PROVISION_USER)", "error")
         return redirect(url_for("users.index"))
 
     # ✅ Scope check: admin แก้ไขได้เฉพาะ user ใน Device Group ของตัวเอง
@@ -748,6 +760,12 @@ def edit_user_submit(username):
 
     if not target:
         flash(f"ไม่พบผู้ใช้ {username}", "error")
+        return redirect(url_for("users.index"))
+
+    # 🔒 Safety: protect provisioning account from accidental deletion
+    prov_user = (_read_env("OLT_PROVISION_USER", "") or "").strip()
+    if prov_user and username.strip().lower() == prov_user.lower():
+        flash(f"ห้ามลบผู้ใช้ provisioning account '{username}' (ตั้งค่าใน OLT_PROVISION_USER)", "error")
         return redirect(url_for("users.index"))
 
     existing_gids = _normalize_gid_list(target.get("device_group_ids"))
