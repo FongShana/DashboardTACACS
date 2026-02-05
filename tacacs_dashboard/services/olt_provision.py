@@ -5,6 +5,32 @@ from .tacacs_config import _read_env
 from .olt_telnet import telnet_exec_commands
 from .policy_store import is_reserved_olt_username
 
+
+
+def _select_olt_login_creds(*, target_username: str) -> tuple[str, str]:
+    """Pick telnet login credentials for OLT provisioning.
+
+    Preference order:
+    1) OLT_PROVISION_USER/PASSWORD (TACACS service account) if set
+    2) OLT_ADMIN_USER/PASSWORD (legacy local admin) fallback
+
+    Safety:
+    - When provisioning the provisioning account itself (target_username == OLT_PROVISION_USER),
+      force use of legacy admin to avoid chicken-and-egg on new OLTs.
+    """
+    prov_user = (_read_env("OLT_PROVISION_USER", "") or "").strip()
+    prov_pass = (_read_env("OLT_PROVISION_PASSWORD", "") or "").strip()
+    admin_user = (_read_env("OLT_ADMIN_USER", "zte") or "zte").strip()
+    admin_pass = (_read_env("OLT_ADMIN_PASSWORD", "") or "").strip()
+
+    if not prov_user or not prov_pass:
+        return admin_user, admin_pass
+
+    if (target_username or "").strip().lower() == prov_user.lower():
+        return admin_user, admin_pass
+
+    return prov_user, prov_pass
+
 def build_provision_commands(username: str, role: str) -> list[str]:
     cmds: list[str] = [
         "conf t",
@@ -27,15 +53,14 @@ def provision_user_on_olt(
     save: bool = False,
     dry_run: bool = False,
 ) -> str:
-    admin_user = _read_env("OLT_ADMIN_USER", "zte")
-    admin_pass = _read_env("OLT_ADMIN_PASSWORD", "")
+    login_user, login_pass = _select_olt_login_creds(target_username=username)
     enable15 = _read_env("OLT_ENABLE15_PASSWORD", "")
     timeout_s = int(_read_env("OLT_TELNET_TIMEOUT", "8") or "8")
 
-    if not admin_pass:
-        raise RuntimeError("OLT_ADMIN_PASSWORD not set in secret.env")
+    if not login_pass:
+        raise RuntimeError("OLT_PROVISION_PASSWORD or OLT_ADMIN_PASSWORD not set in secret.env")
 
-    if is_reserved_olt_username(username) or (username or '').strip().lower() == (admin_user or '').strip().lower():
+    if is_reserved_olt_username(username) or (username or '').strip().lower() == (login_user or '').strip().lower():
         raise RuntimeError(f"Refusing to provision reserved username '{username}' on OLT")
 
     cmds = build_provision_commands(username=username, role=role)
@@ -47,8 +72,8 @@ def provision_user_on_olt(
 
     return telnet_exec_commands(
         host=olt_ip,
-        admin_user=admin_user,
-        admin_pass=admin_pass,
+        admin_user=login_user,
+        admin_pass=login_pass,
         enable_pass=enable15,
         commands=cmds,
         timeout=timeout_s,
@@ -75,18 +100,16 @@ def deprovision_user_on_olt(
     save: bool = False,
     dry_run: bool = False,
 ) -> str:
-    admin_user = _read_env("OLT_ADMIN_USER", "zte")
-    admin_pass = _read_env("OLT_ADMIN_PASSWORD", "")
+    login_user, login_pass = _select_olt_login_creds(target_username=username)
     enable15 = _read_env("OLT_ENABLE15_PASSWORD", "")
     timeout_s = int(_read_env("OLT_TELNET_TIMEOUT", "8") or "8")
 
-    if not admin_pass:
-        raise RuntimeError("OLT_ADMIN_PASSWORD not set in secret.env")
+    if not login_pass:
+        raise RuntimeError("OLT_PROVISION_PASSWORD or OLT_ADMIN_PASSWORD not set in secret.env")
 
-    # กันพลาด: ไม่ให้ลบ user admin ที่ใช้ provision อยู่
-    if username == admin_user:
-        raise RuntimeError(f"Refuse to delete admin_user '{admin_user}' on OLT")
-
+    # กันพลาด: ไม่ให้ลบ account ที่ใช้ provision อยู่
+    if (username or '').strip().lower() == (login_user or '').strip().lower():
+        raise RuntimeError(f"Refuse to delete login_user '{login_user}' on OLT")
     cmds = build_deprovision_commands(username=username)
     if save:
         cmds.append("write")
@@ -96,8 +119,8 @@ def deprovision_user_on_olt(
 
     return telnet_exec_commands(
         host=olt_ip,
-        admin_user=admin_user,
-        admin_pass=admin_pass,
+        admin_user=login_user,
+        admin_pass=login_pass,
         enable_pass=enable15,
         commands=cmds,
         timeout=timeout_s,

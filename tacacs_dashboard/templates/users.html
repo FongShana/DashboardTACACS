@@ -1,4 +1,4 @@
-\{% extends "base.html" %}
+{% extends "base.html" %}
 
 {% block title %}Users & Roles | NT TACACS+{% endblock %}
 {% block header %}Users &amp; Roles{% endblock %}
@@ -15,23 +15,50 @@
   {% endif %}
 {% endwith %}
 
-<div class="section" style="margin-top: 0.25rem;">
-  <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
-    <a href="{{ url_for('users.index', tab='overview') }}"
-       class="btn btn-sm {{ 'btn-primary' if active_tab == 'overview' else 'btn-secondary' }}">
-      Users &amp; Roles
-    </a>
-    {% if is_superadmin %}
-    <a href="{{ url_for('users.index', tab='zte') }}"
-       class="btn btn-sm {{ 'btn-primary' if active_tab == 'zte' else 'btn-secondary' }}">
-      Emergency (zte template)
-    </a>
-    {% endif %}
-  </div>
+{% set active_tab = request.args.get('tab', 'overview') %}
+{% set prov_user = (provision_user if provision_user is defined and provision_user else 'tac_prov') %}
+
+<div class="tabbar" style="display:flex; gap:0.75rem; margin:0.75rem 0 1.0rem;">
+  <a class="btn btn-sm {% if active_tab != 'zte' %}btn-primary{% else %}btn-secondary{% endif %}"
+     href="{{ url_for('users.index') }}?tab=overview">Users &amp; Roles</a>
+  <a class="btn btn-sm {% if active_tab == 'zte' %}btn-primary{% else %}btn-secondary{% endif %}"
+     href="{{ url_for('users.index') }}?tab=zte">Emergency (zte template)</a>
 </div>
 
+{% if active_tab == 'zte' %}
+<section class="section">
+  <h2 class="section-title">Target OLT</h2>
 
-{% if active_tab == 'overview' %}
+  <form method="post" action="{{ url_for('users.zte_template_switch') }}" class="form-card">
+    <div class="form-grid">
+      <div class="form-row">
+        <label for="olt_ip">OLT IP</label>
+        <select class="input" id="olt_ip" name="olt_ip" required>
+          <option value="">-- Select an online OLT --</option>
+          {% for d in devices %}
+            <option value="{{ d.ip }}">{{ d.ip }} • {{ d.name }} • {{ d.group_label }}</option>
+          {% endfor %}
+        </select>
+        <div class="hint">แสดงเฉพาะ OLT ที่สถานะ online และ bootstrap_done แล้ว</div>
+      </div>
+    </div>
+
+    <div style="display:flex; gap:0.75rem; margin-top:0.75rem; flex-wrap:wrap;">
+      <button type="submit" name="mode" value="to128" class="btn btn-danger">
+        Switch zte → template 128
+      </button>
+      <button type="submit" name="mode" value="to1" class="btn btn-secondary">
+        Revert zte → template 1
+      </button>
+    </div>
+
+    <div class="hint" style="margin-top:0.75rem;">
+      แนะนำ: ใช้ template 128 เป็นโหมดปกติ (zte เข้าไม่ได้เมื่อ TACACS up) และสลับกลับ template 1 เฉพาะช่วงที่ต้องใช้ local/break-glass
+    </div>
+  </form>
+</section>
+
+{% else %}
 
 
 <h2 class="mb-3">Add User</h2>
@@ -201,6 +228,9 @@
               Edit
             </a>
 
+            {% if user.username|lower == prov_user|lower %}
+              <span class="hint" style="margin-left:0.5rem; color:#6b7280;">Protected</span>
+            {% else %}
             <form method="post"
                   action="{{ url_for('users.delete_user_form', username=user.username) }}"
                   style="display:inline;">
@@ -210,6 +240,7 @@
                 Delete
               </button>
             </form>
+            {% endif %}
           </td>
         </tr>
         {% else %}
@@ -260,61 +291,6 @@
         {% endfor %}
       </tbody>
     </table>
-  </div>
-</section>
-
-{% else %}
-
-<section class="section">
-  <h2 class="section-title">Emergency: Switch zte Template (per OLT)</h2>
-  <div class="card">
-    <div class="card-sub">
-      ใช้เมนูนี้เพื่อสลับ template ของ user <b>zte</b> ระหว่าง <b>1</b> (Local) และ <b>128</b> (TACACS-local/controlled).
-      รองรับการเลือก OLT เป็นราย IP และสั่งผ่าน Telnet จาก Dashboard
-      (ควรใช้เฉพาะ superadmin).
-      <br><br>
-      <b>หมายเหตุ:</b> ต้องมีสิทธิ์ telnet เข้า OLT ได้ด้วย account ที่ตั้งไว้ใน <code>secret.env</code>:
-      <ul style="margin:0.5rem 0 0 1.25rem;">
-        <li>ถ้ามี <code>OLT_PROVISION_USER/PASSWORD</code> จะใช้คู่นี้ก่อน</li>
-        <li>ถ้าไม่ตั้ง จะ fallback ไปใช้ <code>OLT_ADMIN_USER/PASSWORD</code></li>
-      </ul>
-    </div>
-  </div>
-</section>
-
-<section class="section">
-  <h2 class="section-title">Target OLT</h2>
-  <div class="table-wrapper">
-    <form method="post" action="{{ url_for('users.zte_template_switch') }}">
-      <div style="display:flex; gap:0.75rem; flex-wrap:wrap; align-items:flex-end;">
-        <div style="min-width: 320px;">
-          <label class="form-label">OLT IP</label>
-          <select class="input" name="olt_ip" required>
-            <option value="">-- Select an online OLT --</option>
-            {% for d in devices %}
-              <option value="{{ d.ip }}">{{ d.group_label }} — {{ d.name }} ({{ d.ip }})</option>
-            {% endfor %}
-          </select>
-          <div class="card-sub" style="margin-top:0.35rem;">
-            แสดงเฉพาะ OLT ที่สถานะ <b>online</b> และ bootstrap_done แล้ว
-          </div>
-        </div>
-      </div>
-
-      <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:0.9rem;">
-        <button class="btn btn-danger" type="submit" name="mode" value="to128">
-          Switch zte → template 128
-        </button>
-        <button class="btn btn-secondary" type="submit" name="mode" value="to1">
-          Revert zte → template 1
-        </button>
-      </div>
-
-      <div class="card-sub" style="margin-top:0.9rem;">
-        แนะนำ: ใช้ <b>template 128</b> เป็นโหมดปกติ (zte เข้าไม่ได้เมื่อ TACACS up),
-        และสลับกลับ <b>template 1</b> เฉพาะช่วงที่ต้องใช้ local/break-glass.
-      </div>
-    </form>
   </div>
 </section>
 

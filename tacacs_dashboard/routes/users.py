@@ -408,6 +408,7 @@ def index():
     # Scope admin view to device groups (users without device_group_ids are treated as out of scope)
     _role, _web_uname, allowed_gids = _current_scope()
     is_superadmin = (_role == "superadmin")
+    provisioning_username = (_read_env("OLT_PROVISION_USER", "tac_prov") or "tac_prov").strip()
 
     active_tab = (request.args.get("tab") or "overview").strip().lower()
     if active_tab not in ("overview", "zte"):
@@ -524,6 +525,7 @@ def index():
         is_superadmin=is_superadmin,
         active_page="users",
         active_tab=active_tab,
+        provisioning_username=provisioning_username,
     )
 
 
@@ -699,6 +701,11 @@ def delete_user_form(username: str):
         flash("username ไม่ถูกต้อง", "error")
         return redirect(url_for("users.index"))
 
+    provisioning_username = (_read_env("OLT_PROVISION_USER", "tac_prov") or "tac_prov").strip()
+    if provisioning_username and username.lower() == provisioning_username.lower():
+        flash(f"ห้ามลบบัญชี provisioning ({provisioning_username})", "error")
+        return redirect(url_for("users.index"))
+
     policy = load_policy()
     users = policy.get("users", [])
     target = None
@@ -756,6 +763,8 @@ def edit_user_form(username):
     # ✅ Scope check: admin แก้ไขได้เฉพาะ user ใน Device Group ของตัวเอง
     _role, _web_uname, allowed_gids = _current_scope()
     is_superadmin = (_role == "superadmin")
+    provisioning_username = (_read_env("OLT_PROVISION_USER", "tac_prov") or "tac_prov").strip()
+    is_provisioning_user = bool(provisioning_username) and (username or "").strip().lower() == provisioning_username.strip().lower()
 
     active_tab = (request.args.get("tab") or "overview").strip().lower()
     if active_tab not in ("overview", "zte"):
@@ -788,6 +797,8 @@ def edit_user_form(username):
         selected_target_olt_ips=selected_target_olt_ips,
         is_superadmin=is_superadmin,
         current_role=current_role,
+        provisioning_username=provisioning_username,
+        is_provisioning_user=is_provisioning_user,
     )
 
 
@@ -804,10 +815,7 @@ def edit_user_submit(username):
     # Optional fields (backward compatible)
     new_first_name = (request.form.get("first_name") or "").strip()
     new_last_name = (request.form.get("last_name") or "").strip()
-
     new_password = (request.form.get("password") or "").strip()
-    if new_password:
-        set_user_password(username, new_password)
 
     policy = load_policy()
     users = policy.get("users", [])
@@ -822,6 +830,24 @@ def edit_user_submit(username):
     if not target:
         flash(f"ไม่พบผู้ใช้ {username}", "error")
         return redirect(url_for("users.index"))
+
+    provisioning_username = (_read_env("OLT_PROVISION_USER", "tac_prov") or "tac_prov").strip()
+    is_provisioning_user = bool(provisioning_username) and username.lower() == provisioning_username.lower()
+    current_role = (target.get("roles") or target.get("role") or "").strip()
+
+    # Protect provisioning account: do not allow role/password changes from UI
+    if is_provisioning_user:
+        if new_password:
+            flash("บัญชี provisioning ไม่อนุญาตให้เปลี่ยนรหัสผ่านจากหน้าเว็บ", "warning")
+        new_password = ""
+        if new_role and (new_role.strip() != current_role):
+            flash("บัญชี provisioning ไม่อนุญาตให้เปลี่ยน Role จากหน้าเว็บ", "warning")
+        # If role field is missing/disabled, keep existing role
+        new_role = current_role
+
+    # Apply password change (non-provisioning users only)
+    if new_password:
+        set_user_password(username, new_password)
 
     existing_gids = _normalize_gid_list(target.get("device_group_ids"))
     existing_target_ips = _normalize_ip_list(target.get("target_olt_ips"))

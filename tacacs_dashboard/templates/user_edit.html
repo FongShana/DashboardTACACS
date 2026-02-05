@@ -15,6 +15,9 @@
   {% endif %}
 {% endwith %}
 
+{% set prov_user = (provision_user if provision_user is defined and provision_user else 'tac_prov') %}
+{% set is_prov = (user.username|lower == prov_user|lower) %}
+
 <section class="section">
   <h2 class="section-title">Edit User / Role / Status</h2>
 
@@ -37,7 +40,7 @@
 
       <div class="form-row">
         <label for="role">Role</label>
-        <select class="input" id="role" name="role">
+        <select class="input" id="role" name="role" {% if is_prov %}disabled{% endif %}>
           <option value="">-- เลือก Role --</option>
           {% for r in roles %}
           <option value="{{ r.name }}"
@@ -46,6 +49,10 @@
           </option>
           {% endfor %}
         </select>
+        {% if is_prov %}
+          <input type="hidden" name="role" value="{{ current_role }}">
+          <div class="hint" style="margin-top:0.35rem; color:#6b7280;">บัญชี provisioning ถูกล็อก: ห้ามแก้ Role</div>
+        {% endif %}
       </div>
 
       <div class="form-row">
@@ -143,9 +150,9 @@
     </div>
 
     <div class="form-row">
-      <label for="password">New Password (เว้นว่าง = ไม่เปลี่ยน)</label>
+      <label for="password">New Password (เว้นว่าง = ไม่เปลี่ยน){% if is_prov %} • (Locked){% endif %}</label>
       <input class="input" id="password" type="password" name="password"
-             autocomplete="new-password">
+             autocomplete="new-password" {% if is_prov %}disabled placeholder="Locked"{% endif %}>
     </div>
 
 
@@ -157,6 +164,5 @@
 </section>
 
 {% endblock %}
-
 
 
