@@ -561,7 +561,7 @@ def zte_template_switch():
             username="zte",
             auth_template=auth_t,
             author_template=author_t,
-            save=do_write,
+            save=False,
         )
         flash(f"สำเร็จ: {label} ที่ {olt_ip}", "success")
     except Exception as e:
