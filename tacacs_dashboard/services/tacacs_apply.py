@@ -6,6 +6,7 @@ import os
 
 from .locks import exclusive_lock
 from .tacacs_config import (
+    BASE_DIR,
     build_config_text,
     build_pass_secret_text,
     build_devices_secret_text,
@@ -13,7 +14,7 @@ from .tacacs_config import (
     DEVICES_SECRET_PATH,
 )
 
-DEFAULT_CONFIG_PATH = Path("/home/trainee25/tacacs-web/tacacs-generated.cfg")
+DEFAULT_CONFIG_PATH = BASE_DIR / "tacacs-generated.cfg"
 TACACS_BIN = "/usr/local/sbin/tac_plus-ng"
 TACACS_SERVICE = "tac_plus-ng"
 

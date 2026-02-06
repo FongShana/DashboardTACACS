@@ -553,6 +553,12 @@ def create_user_form():
         flash(f"ไม่อนุญาตให้ใช้ Username '{username}' (ถูกสงวนไว้/อาจชนกับ local user บน OLT)", "error")
         return redirect(url_for("users.index"))
 
+    # Protect provisioning service-account name from secret.env (default: tac_prov)
+    prov_user = _get_provision_user()
+    if username.strip().lower() == prov_user.strip().lower():
+        flash(f"ห้ามสร้าง Username '{username}' เพราะเป็นบัญชี provisioning ({prov_user})", "error")
+        return redirect(url_for("users.index"))
+
     # ✅ Scope: admin สามารถสร้าง user ได้เฉพาะใน OLT ที่อยู่ใน Device Group ของตัวเองเท่านั้น
     _role, _web_uname, allowed_gids = _current_scope()
     is_superadmin = (_role == "superadmin")
@@ -786,12 +792,39 @@ def edit_user_submit(username):
     _role, _web_uname, allowed_gids = _current_scope()
     is_superadmin = (_role == "superadmin")
 
+
+    current_role = (target.get("roles") or target.get("role") or target.get("group") or "").strip() or "OLT_VIEW"
+    current_status = (target.get("status") or "Active").strip() or "Active"
+
+    # Protect provisioning account: disallow role/status/scope changes (role/status/device_group_ids/target_olt_ips)
+    if is_prov:
+        # Role
+        if new_role and new_role != current_role:
+            flash("บัญชี provisioning ถูกล็อก: ไม่อนุญาตให้เปลี่ยน role", "warning")
+        new_role = current_role
+
+        # Status
+        if new_status and (new_status.strip().lower() != current_status.strip().lower()):
+            flash("บัญชี provisioning ถูกล็อก: ไม่อนุญาตให้เปลี่ยน status", "warning")
+        new_status = current_status
+
+        # Scope: only warn if the field exists in the submitted form (prevents false warnings for admin UI)
+        if "device_group_ids" in request.form:
+            form_gids = _normalize_gid_list(request.form.getlist("device_group_ids"))
+            if form_gids != existing_gids:
+                flash("บัญชี provisioning ถูกล็อก: ไม่อนุญาตให้เปลี่ยน device group scope", "warning")
+
+        if "target_olt_ips" in request.form:
+            form_ips = _normalize_ip_list(request.form.getlist("target_olt_ips"))
+            if set(form_ips) != set(existing_target_ips):
+                flash("บัญชี provisioning ถูกล็อก: ไม่อนุญาตให้เปลี่ยน target OLT scope", "warning")
     # device_group_ids update:
     # - admin: cannot change scope; if user has no device_group_ids, it will be scoped to admin's groups on first edit
     # - superadmin: must assign at least 1 device group (ยกเลิกแนวคิด Unscoped)
-    device_group_ids_to_set = None
-
-    if allowed_gids is not None:
+    # - provisioning user: scope is immutable
+    if is_prov:
+        device_group_ids_to_set = existing_gids
+    elif allowed_gids is not None:
         # web admin scope check
         if not _user_in_scope(target, allowed_gids):
             flash("คุณไม่มีสิทธิ์แก้ไขผู้ใช้นี้ (อยู่นอก Device Group ของคุณ)", "error")
@@ -817,15 +850,18 @@ def edit_user_submit(username):
         device_group_ids_to_set = selected
 
     # Optional: target OLT subset (online only, must be inside assigned device groups)
-    raw_target_ips = _normalize_ip_list(request.form.getlist("target_olt_ips"))
-    allowed_ips = set(_get_olt_ip_list(policy, allowed_group_ids=device_group_ids_to_set))
-    target_ips = [ip for ip in raw_target_ips if ip in allowed_ips]
+    if is_prov:
+        target_ips = existing_target_ips
+    else:
+        raw_target_ips = _normalize_ip_list(request.form.getlist("target_olt_ips"))
+        allowed_ips = set(_get_olt_ip_list(policy, allowed_group_ids=device_group_ids_to_set))
+        target_ips = [ip for ip in raw_target_ips if ip in allowed_ips]
 
-    if raw_target_ips and not target_ips:
-        flash("OLT ที่เลือกไม่อยู่ใน Device Group ที่กำหนด หรือ OLT ไม่ได้ Online — โปรดเลือกใหม่ (หรือไม่เลือกเลย = ทุก OLT ใน scope)", "error")
-        return redirect(url_for("users.edit_user_form", username=username))
-    if raw_target_ips and len(target_ips) != len(raw_target_ips):
-        flash("บาง OLT ที่เลือกถูกตัดออก (อยู่นอก scope หรือ Offline) — ระบบจะใช้เฉพาะ OLT ที่ Online ใน scope เท่านั้น", "warning")
+        if raw_target_ips and not target_ips:
+            flash("OLT ที่เลือกไม่อยู่ใน Device Group ที่กำหนด หรือ OLT ไม่ได้ Online — โปรดเลือกใหม่ (หรือไม่เลือกเลย = ทุก OLT ใน scope)", "error")
+            return redirect(url_for("users.edit_user_form", username=username))
+        if raw_target_ips and len(target_ips) != len(raw_target_ips):
+            flash("บาง OLT ที่เลือกถูกตัดออก (อยู่นอก scope หรือ Offline) — ระบบจะใช้เฉพาะ OLT ที่ Online ใน scope เท่านั้น", "warning")
 
     role_names = {r.get("name") for r in roles if r.get("name")}
     if role_names and new_role and new_role not in role_names:
