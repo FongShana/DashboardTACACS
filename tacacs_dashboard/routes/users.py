@@ -60,6 +60,51 @@ def _normalize_gid_list(value) -> list[str]:
     return out
 
 
+
+def _valid_device_group_set(policy) -> set[str]:
+    valid: set[str] = set()
+    for g in (policy.get("device_groups") or []):
+        if isinstance(g, dict):
+            gid = (g.get("id") or g.get("group_id") or "").strip().lower()
+            if gid:
+                valid.add(gid)
+    return valid
+
+
+def _read_device_group_ids_from_form(policy) -> list[str]:
+    """Read device group selection from request.form.
+
+    Backward compatible:
+    - legacy checkboxes: device_group_ids (getlist)
+    - new dropdown: device_group_id (single value)
+      - supports "__ALL_GROUPS__" for all groups
+      - supports "__MULTI__:a,b" (edit legacy multi-groups display)
+    """
+    # Legacy: checkbox list
+    selected = _normalize_gid_list(request.form.getlist("device_group_ids"))
+    if not selected:
+        raw = (request.form.get("device_group_id") or "").strip()
+        raw_l = raw.lower()
+
+        if raw_l == "__all_groups__":
+            valid = sorted(_valid_device_group_set(policy))
+            selected = _normalize_gid_list(valid)
+        else:
+            if raw_l.startswith("__multi__:"):
+                raw = raw.split(":", 1)[1] if ":" in raw else ""
+            parts = [(p or "").strip().lower() for p in (raw or "").split(",")]
+            out: list[str] = []
+            for p in parts:
+                if p and p not in out:
+                    out.append(p)
+            selected = out
+
+    valid_set = _valid_device_group_set(policy)
+    if valid_set:
+        selected = [g for g in selected if g in valid_set]
+    return selected
+
+
 def _normalize_ip_list(value) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -577,23 +622,10 @@ def create_user_form():
         device_group_ids = allowed_gids
     else:
         # superadmin: ต้องเลือก Device Group อย่างน้อย 1 กลุ่ม (ยกเลิกแนวคิด Unscoped)
-        selected = _normalize_gid_list(request.form.getlist("device_group_ids"))
+        selected = _read_device_group_ids_from_form(load_policy())
         if not selected:
             flash("กรุณาเลือก Device Group อย่างน้อย 1 กลุ่ม", "error")
             return redirect(url_for("users.index"))
-
-        # validate against existing device groups
-        valid_set = set()
-        for g in (load_policy().get("device_groups") or []):
-            if isinstance(g, dict):
-                gid = (g.get("id") or g.get("group_id") or "").strip().lower()
-                if gid:
-                    valid_set.add(gid)
-        selected = [g for g in selected if g in valid_set] if valid_set else selected
-        if not selected:
-            flash("กรุณาเลือก Device Group อย่างน้อย 1 กลุ่ม", "error")
-            return redirect(url_for("users.index"))
-
         device_group_ids = selected
 
     policy = load_policy()
@@ -810,8 +842,8 @@ def edit_user_submit(username):
         new_status = current_status
 
         # Scope: only warn if the field exists in the submitted form (prevents false warnings for admin UI)
-        if "device_group_ids" in request.form:
-            form_gids = _normalize_gid_list(request.form.getlist("device_group_ids"))
+        if ("device_group_ids" in request.form) or ("device_group_id" in request.form):
+            form_gids = _read_device_group_ids_from_form(policy)
             if form_gids != existing_gids:
                 flash("บัญชี provisioning ถูกล็อก: ไม่อนุญาตให้เปลี่ยน device group scope", "warning")
 
@@ -834,16 +866,7 @@ def edit_user_submit(username):
         device_group_ids_to_set = existing_gids or allowed_gids
     else:
         # superadmin: read from form (ต้องเลือกอย่างน้อย 1 group)
-        selected = _normalize_gid_list(request.form.getlist("device_group_ids"))
-
-        # validate group ids exist
-        valid_set = set()
-        for g in (policy.get("device_groups") or []):
-            if isinstance(g, dict):
-                gid = (g.get("id") or g.get("group_id") or "").strip().lower()
-                if gid:
-                    valid_set.add(gid)
-        selected = [g for g in selected if g in valid_set] if valid_set else selected
+        selected = _read_device_group_ids_from_form(policy)
 
         if not selected:
             flash("กรุณาเลือก Device Group อย่างน้อย 1 กลุ่ม", "error")

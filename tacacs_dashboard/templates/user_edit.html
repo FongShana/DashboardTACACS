@@ -70,19 +70,303 @@
       <label>Device Groups (Scope)</label>
       <div class="hint">กำหนดว่า user นี้สามารถใช้งานได้เฉพาะ OLT ใน group ไหน (ต้องเลือกอย่างน้อย 1 กลุ่ม — หากต้องการให้ใช้งานได้ทุก OLT ให้เลือกทุกกลุ่ม)</div>
 
-      <div style="margin-top:0.5rem;">
-        {% for g in device_groups %}
-          {% set gid = g.id if g.id is defined else g['id'] %}
-          {% set nm = g.name if g.name is defined else g.get('name','') %}
-          <label class="inline-check" style="display:flex; gap:0.5rem; align-items:center; margin:0.25rem 0;">
-            <input type="checkbox" name="device_group_ids" value="{{ gid }}"
-                   {% if gid in selected_device_group_ids %}checked{% endif %}>
-            <span><b>{{ nm }}</b> <span class="text-mono">({{ gid }})</span></span>
-          </label>
-        {% else %}
-          <div class="hint">ยังไม่มี device group — ไปสร้างได้ที่ <b>Superadmin: Device Groups</b></div>
-        {% endfor %}
-      </div>
+      <style>
+  /* Lightweight multi-select (no external libs) */
+  .msel { position: relative; width: 100%; }
+  .msel-control{
+    min-height: 38px;
+    display:flex; align-items:center; gap:6px;
+    padding: 6px 10px;
+    border: 1px solid rgba(0,0,0,0.20);
+    border-radius: 10px;
+    background: rgba(255,255,255,0.92);
+    cursor: pointer;
+    box-sizing: border-box;
+  }
+  .msel-control:focus{ outline: 2px solid rgba(0,0,0,0.12); outline-offset: 2px; }
+  .msel-tags{ display:flex; flex-wrap:wrap; gap:6px; flex: 1 1 auto; min-width:0; }
+  .msel-placeholder{
+    color: rgba(0,0,0,0.45);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display:block;
+    max-width: 100%;
+  }
+  .msel-tag{
+    display:inline-flex; align-items:center; gap:6px;
+    padding: 2px 6px;
+    border-radius: 8px;
+    background: rgba(0,0,0,0.07);
+    border: 1px solid rgba(0,0,0,0.10);
+    user-select:none;
+    font-size: 13px;
+    line-height: 1.2;
+  }
+  .msel-tag button{
+    border: none; background: transparent; cursor:pointer;
+    font-size: 14px; line-height: 1;
+    padding: 0 2px; opacity: 0.65;
+  }
+  .msel-tag button:hover{ opacity: 1; }
+  .msel-caret{ margin-left:auto; opacity:0.55; font-size: 14px; }
+
+  .msel-menu{
+    position:absolute; z-index: 3000;
+    left:0; right:0;
+    margin-top: 6px;
+    border: 1px solid rgba(0,0,0,0.18);
+    border-radius: 12px;
+    background: #fff;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.10);
+    overflow: hidden;
+  }
+  .msel-search{
+    width: 100%;
+    border: none;
+    border-bottom: 1px solid rgba(0,0,0,0.08);
+    padding: 8px 10px;
+    outline: none;
+    background: rgba(0,0,0,0.02);
+    box-sizing: border-box;
+  }
+  .msel-list{ max-height: 210px; overflow:auto; }
+  .msel-item{
+    display:flex; align-items:center; gap:10px;
+    padding: 8px 10px;
+    cursor:pointer;
+    box-sizing: border-box;
+  }
+  .msel-item:hover{ background: rgba(0,0,0,0.04); }
+  .msel-item input{ width: 16px; height: 16px; }
+  .msel-item .muted{ opacity:0.6; font-size: 12px; margin-left:auto; }
+  .msel-sep{ height:1px; background: rgba(0,0,0,0.08); margin: 4px 0; }
+</style>
+
+      <div class="msel" id="dg_msel">
+  <div class="msel-control" id="dg_msel_control" tabindex="0" aria-haspopup="listbox" aria-expanded="false">
+    <div class="msel-tags" id="dg_msel_tags">
+      <span class="msel-placeholder" id="dg_msel_placeholder">Select device group(s)...</span>
+    </div>
+    <span class="msel-caret">▾</span>
+  </div>
+
+  <div class="msel-menu" id="dg_msel_menu" hidden>
+    <input type="text" class="msel-search" id="dg_msel_search" placeholder="search...">
+    <div class="msel-list" id="dg_msel_list"></div>
+  </div>
+</div>
+
+      <select id="device_group_ids" name="device_group_ids" multiple style="display:none;">
+  {% for g in device_groups %}
+    {% set gid = g.id if g.id is defined else g['id'] %}
+    {% set nm = g.name if g.name is defined else g.get('name','') %}
+    <option value="{{ gid }}" {% if gid in selected_device_group_ids %}selected{% endif %}>{{ nm }} ({{ gid }})</option>
+  {% else %}
+    <option value="" disabled>ยังไม่มี device group — ไปสร้างได้ที่ <b>Superadmin: Device Groups</b></option>
+  {% endfor %}
+</select>
+
+      <script>
+(function () {
+  const selectEl = document.getElementById('device_group_ids');
+  const root = document.getElementById('dg_msel');
+  if (!selectEl || !root) return;
+
+  const control = document.getElementById('dg_msel_control');
+  const menu = document.getElementById('dg_msel_menu');
+  const search = document.getElementById('dg_msel_search');
+  const list = document.getElementById('dg_msel_list');
+  const tags = document.getElementById('dg_msel_tags');
+  const placeholder = document.getElementById('dg_msel_placeholder');
+
+  function shortLabel(txt) {
+    const t = (txt || '').trim();
+    const cut = t.split('(')[0].trim();
+    return cut || t;
+  }
+
+  function openMenu() {
+    menu.hidden = false;
+    control.setAttribute('aria-expanded', 'true');
+    setTimeout(() => search && search.focus(), 0);
+  }
+
+  function closeMenu() {
+    menu.hidden = true;
+    control.setAttribute('aria-expanded', 'false');
+    if (search) search.value = '';
+    applyFilter();
+  }
+
+  function toggleMenu() {
+    if (menu.hidden) openMenu();
+    else closeMenu();
+  }
+
+  function selectedOptions() {
+    return Array.from(selectEl.options).filter(o => o.selected && o.value);
+  }
+
+  function syncTags() {
+    // Clear current tags (keep placeholder node)
+    Array.from(tags.querySelectorAll('.msel-tag')).forEach(n => n.remove());
+
+    const sel = selectedOptions();
+    placeholder.style.display = sel.length ? 'none' : 'block';
+
+    sel.forEach(opt => {
+      const chip = document.createElement('span');
+      chip.className = 'msel-tag';
+      chip.textContent = shortLabel(opt.textContent);
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.innerHTML = '&times;';
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        opt.selected = false;
+        syncListChecks();
+        syncTags();
+        selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+
+      chip.appendChild(btn);
+      tags.appendChild(chip);
+    });
+  }
+
+  function makeItem(labelText, value, checked, mutedText, isAll) {
+    const row = document.createElement('div');
+    row.className = 'msel-item';
+    row.setAttribute('role', 'option');
+
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = !!checked;
+
+    const lbl = document.createElement('div');
+    lbl.textContent = labelText;
+
+    row.appendChild(cb);
+    row.appendChild(lbl);
+
+    if (mutedText) {
+      const muted = document.createElement('div');
+      muted.className = 'muted';
+      muted.textContent = mutedText;
+      row.appendChild(muted);
+    }
+
+    function setAll(on) {
+      Array.from(selectEl.options).forEach(o => { if (o.value) o.selected = on; });
+      syncListChecks();
+      syncTags();
+      selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    function setOne(on) {
+      const opt = Array.from(selectEl.options).find(o => o.value === value);
+      if (!opt) return;
+      opt.selected = on;
+      syncListChecks();
+      syncTags();
+      selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    row.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (isAll) {
+        const next = !cb.checked;
+        cb.checked = next;
+        setAll(next);
+      } else {
+        const next = !cb.checked;
+        cb.checked = next;
+        setOne(next);
+      }
+    });
+
+    return { row, cb };
+  }
+
+  let allItem = null;
+  let optionItems = [];
+
+  function buildList() {
+    list.innerHTML = '';
+    optionItems = [];
+
+    // All selector
+    allItem = makeItem('All', '__ALL__', false, '', true);
+    list.appendChild(allItem.row);
+
+    const sep = document.createElement('div');
+    sep.className = 'msel-sep';
+    list.appendChild(sep);
+
+    Array.from(selectEl.options).forEach(opt => {
+      if (!opt.value) return;
+      const gid = opt.value;
+      const label = shortLabel(opt.textContent);
+      const item = makeItem(label, gid, opt.selected, gid, false);
+      item.row.dataset.value = gid;
+      item.row.dataset.label = label.toLowerCase();
+      optionItems.push(item);
+      list.appendChild(item.row);
+    });
+
+    syncListChecks();
+  }
+
+  function syncListChecks() {
+    const selected = new Set(selectedOptions().map(o => o.value));
+    optionItems.forEach(it => { it.cb.checked = selected.has(it.row.dataset.value); });
+    if (allItem) {
+      const total = optionItems.length;
+      const selCount = selected.size;
+      allItem.cb.checked = (total > 0 && selCount === total);
+      allItem.cb.indeterminate = (selCount > 0 && selCount < total);
+    }
+    applyFilter();
+  }
+
+  function applyFilter() {
+    const q = (search && search.value || '').trim().toLowerCase();
+    optionItems.forEach(it => {
+      if (!q) { it.row.hidden = false; return; }
+      const lbl = it.row.dataset.label || '';
+      const val = (it.row.dataset.value || '').toLowerCase();
+      it.row.hidden = !(lbl.includes(q) || val.includes(q));
+    });
+  }
+
+  // Open/close handlers
+  control.addEventListener('click', (e) => { e.preventDefault(); toggleMenu(); });
+  control.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleMenu(); }
+    if (e.key === 'Escape') { e.preventDefault(); closeMenu(); }
+  });
+
+  document.addEventListener('click', (e) => {
+    if (menu.hidden) return;
+    if (root.contains(e.target)) return;
+    closeMenu();
+  });
+
+  if (search) {
+    search.addEventListener('input', applyFilter);
+    search.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); closeMenu(); }
+    });
+  }
+
+  // Initial build
+  buildList();
+  syncTags();
+})();
+</script>
       <div class="hint" style="margin-top:0.35rem;">หมายเหตุ: ถ้าไม่เลือก group เลย ระบบจะไม่ให้บันทึก</div>
     </div>
     {% endif %}
@@ -116,36 +400,45 @@
           const sel = document.getElementById('target_olt_choice');
           if (!sel) return;
 
-          const groupInputs = Array.from(document.querySelectorAll('input[name="device_group_ids"]'));
+          const groupSelect = document.getElementById('device_group_ids'); // new: hidden <select multiple>
+    const groupInputs = Array.from(document.querySelectorAll('input[name="device_group_ids"]')); // legacy fallback
 
-          function updateOptions() {
-            const selected = new Set(groupInputs.filter(i => i.checked).map(i => (i.value || '').toLowerCase()));
-            const hasGroups = (groupInputs.length === 0) || (selected.size > 0);
+    function selectedGroupIds() {
+      if (groupSelect) {
+        return Array.from(groupSelect.selectedOptions)
+          .map(o => (o.value || '').toLowerCase())
+          .filter(Boolean);
+      }
+      return groupInputs
+        .filter(i => i.checked)
+        .map(i => (i.value || '').toLowerCase())
+        .filter(Boolean);
+    }
 
-            Array.from(sel.options).forEach(opt => {
-              if (opt.value === '__ALL__') {
-                opt.hidden = false;
-                return;
-              }
-              const gid = (opt.dataset.gid || '').toLowerCase();
-              if (!hasGroups) {
-                opt.hidden = true;
-                return;
-              }
-              opt.hidden = (selected.size > 0) ? (!selected.has(gid)) : false;
-            });
+    function updateOptions() {
+      const selected = new Set(selectedGroupIds());
+      const hasGroups = groupSelect ? (selected.size > 0) : ((groupInputs.length === 0) || (selected.size > 0));
 
-            if (sel.selectedOptions.length && sel.selectedOptions[0].hidden) {
-              sel.value = '__ALL__';
-            }
+      Array.from(sel.options).forEach(opt => {
+        if (opt.value === '__ALL__') { opt.hidden = false; return; }
+        const gid = (opt.dataset.gid || '').toLowerCase();
+        if (!hasGroups) { opt.hidden = true; return; }
+        opt.hidden = (selected.size > 0) ? (!selected.has(gid)) : false;
+      });
 
-            sel.disabled = !hasGroups;
-          }
+      if (sel.selectedOptions.length && sel.selectedOptions[0].hidden) {
+        sel.value = '__ALL__';
+      }
 
-          groupInputs.forEach(i => i.addEventListener('change', updateOptions));
-          updateOptions();
-        })();
-      </script>
+      // If no group selected, disable dropdown (backend will block save anyway)
+      sel.disabled = !hasGroups;
+    }
+
+    if (groupSelect) groupSelect.addEventListener('change', updateOptions);
+    groupInputs.forEach(i => i.addEventListener('change', updateOptions));
+    updateOptions();
+  })();
+</script>
       {% endif %}
     </div>
 
