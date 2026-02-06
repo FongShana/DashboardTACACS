@@ -16,61 +16,9 @@
 {% endwith %}
 
 {% set prov_user = (provision_user if provision_user is defined and provision_user else 'tac_prov') %}
-{% set is_prov = (user.username|lower == prov_user|lower) %}
 
-<section class="section">
-  <h2 class="section-title">Edit User / Role / Status</h2>
 
-  <form method="post" class="form-card">
-    <div class="form-grid">
-      <div class="form-row">
-        <label>Username (แก้ไม่ได้)</label>
-        <input class="input" type="text" value="{{ user.username }}" disabled>
-      </div>
-
-      <div class="form-row">
-        <label for="first_name">First name</label>
-        <input class="input" id="first_name" type="text" name="first_name" value="{{ user.first_name or '' }}">
-      </div>
-
-      <div class="form-row">
-        <label for="last_name">Last name</label>
-        <input class="input" id="last_name" type="text" name="last_name" value="{{ user.last_name or '' }}">
-      </div>
-
-      <div class="form-row">
-        <label for="role">Role</label>
-        <select class="input" id="role" name="role" {% if is_prov %}disabled{% endif %}>
-          <option value="">-- เลือก Role --</option>
-          {% for r in roles %}
-          <option value="{{ r.name }}"
-                  {% if r.name == current_role %}selected{% endif %}>
-            {{ r.name }}
-          </option>
-          {% endfor %}
-        </select>
-        {% if is_prov %}
-          <input type="hidden" name="role" value="{{ current_role }}">
-          <div class="hint" style="margin-top:0.35rem; color:#6b7280;">บัญชี provisioning ถูกล็อก: ห้ามแก้ Role</div>
-        {% endif %}
-      </div>
-
-      <div class="form-row">
-        <label for="status">Status</label>
-        {% set st = user.status or "Active" %}
-        <select class="input" id="status" name="status">
-          <option value="Active"   {% if st == "Active" %}selected{% endif %}>Active</option>
-          <option value="Disabled" {% if st == "Disabled" %}selected{% endif %}>Disabled</option>
-        </select>
-      </div>
-    </div>
-
-    {% if is_superadmin %}
-    <div class="form-row" style="margin-top:0.25rem;">
-      <label>Device Groups (Scope)</label>
-      <div class="hint">กำหนดว่า user นี้สามารถใช้งานได้เฉพาะ OLT ใน group ไหน (ต้องเลือกอย่างน้อย 1 กลุ่ม — หากต้องการให้ใช้งานได้ทุก OLT ให้เลือกทุกกลุ่ม)</div>
-
-      <style>
+<style>
   /* Lightweight multi-select (no external libs) */
   .msel { position: relative; width: 100%; }
   .msel-control{
@@ -142,8 +90,60 @@
   .msel-item .muted{ opacity:0.6; font-size: 12px; margin-left:auto; }
   .msel-sep{ height:1px; background: rgba(0,0,0,0.08); margin: 4px 0; }
 </style>
+{% set is_prov = (user.username|lower == prov_user|lower) %}
 
-      <div class="msel" id="dg_msel">
+<section class="section">
+  <h2 class="section-title">Edit User / Role / Status</h2>
+
+  <form method="post" class="form-card">
+    <div class="form-grid">
+      <div class="form-row">
+        <label>Username (แก้ไม่ได้)</label>
+        <input class="input" type="text" value="{{ user.username }}" disabled>
+      </div>
+
+      <div class="form-row">
+        <label for="first_name">First name</label>
+        <input class="input" id="first_name" type="text" name="first_name" value="{{ user.first_name or '' }}">
+      </div>
+
+      <div class="form-row">
+        <label for="last_name">Last name</label>
+        <input class="input" id="last_name" type="text" name="last_name" value="{{ user.last_name or '' }}">
+      </div>
+
+      <div class="form-row">
+        <label for="role">Role</label>
+        <select class="input" id="role" name="role" {% if is_prov %}disabled{% endif %}>
+          <option value="">-- เลือก Role --</option>
+          {% for r in roles %}
+          <option value="{{ r.name }}"
+                  {% if r.name == current_role %}selected{% endif %}>
+            {{ r.name }}
+          </option>
+          {% endfor %}
+        </select>
+        {% if is_prov %}
+          <input type="hidden" name="role" value="{{ current_role }}">
+          <div class="hint" style="margin-top:0.35rem; color:#6b7280;">บัญชี provisioning ถูกล็อก: ห้ามแก้ Role</div>
+        {% endif %}
+      </div>
+
+      <div class="form-row">
+        <label for="status">Status</label>
+        {% set st = user.status or "Active" %}
+        <select class="input" id="status" name="status">
+          <option value="Active"   {% if st == "Active" %}selected{% endif %}>Active</option>
+          <option value="Disabled" {% if st == "Disabled" %}selected{% endif %}>Disabled</option>
+        </select>
+      </div>
+    </div>
+
+    {% if is_superadmin %}
+    <div class="form-row" style="margin-top:0.25rem;">
+      <label>Device Groups (Scope)</label>
+      <div class="hint">กำหนดว่า user นี้สามารถใช้งานได้เฉพาะ OLT ใน group ไหน (ต้องเลือกอย่างน้อย 1 กลุ่ม — หากต้องการให้ใช้งานได้ทุก OLT ให้เลือกทุกกลุ่ม)</div>
+<div class="msel" id="dg_msel">
   <div class="msel-control" id="dg_msel_control" tabindex="0" aria-haspopup="listbox" aria-expanded="false">
     <div class="msel-tags" id="dg_msel_tags">
       <span class="msel-placeholder" id="dg_msel_placeholder">Select device group(s)...</span>
@@ -372,75 +372,310 @@
     {% endif %}
 
     <div class="form-row" style="margin-top:0.25rem;">
-      <label for="target_olt_choice">Target OLT (Optional)</label>
-      <div class="hint">เลือกได้ 1 รายการ: <b>All OLTs</b> หรือ <b>OLT IP</b> ที่อยู่ใน Device Group ที่เลือก (แสดงเฉพาะ OLT ที่ Online)</div>
 
-      {% set existing_ips = selected_target_olt_ips or [] %}
-      {% if existing_ips|length > 1 %}
-        <div class="hint" style="margin-top:0.35rem; color:#b45309;">หมายเหตุ: ผู้ใช้นี้เคยกำหนด Target OLT หลายตัวไว้: {{ existing_ips|join(', ') }} • ใน UI แบบ dropdown จะเลือกได้เพียง 1 ตัว หรือ All OLTs</div>
-      {% endif %}
+    <label for="target_olt_ips">Target OLT (Optional)</label>
+    <div class="hint">เลือกได้หลายรายการ: <b>OLT IP</b> ที่อยู่ใน Device Group ที่เลือก (แสดงเฉพาะ OLT ที่ Online) • <b>ไม่เลือกเลย</b> = All OLTs (default)</div>
 
-      {% set current_choice = '__ALL__' %}
-      {% if existing_ips|length == 1 %}
-        {% set current_choice = existing_ips[0] %}
-      {% endif %}
+    {% set existing_ips = selected_target_olt_ips or [] %}
 
-      <select class="input" id="target_olt_choice" name="target_olt_choice" style="margin-top:0.5rem;">
-        <option value="__ALL__" {% if current_choice == '__ALL__' %}selected{% endif %}>All OLTs in selected group(s)</option>
-        {% for d in devices %}
-          <option value="{{ d.ip }}" data-gid="{{ d.group_id }}" {% if d.ip == current_choice %}selected{% endif %}>
-            {{ d.name }} ({{ d.ip }}) — {{ d.group_label }}
-          </option>
-        {% endfor %}
-      </select>
+    <!-- Hidden multiple select for backend: request.form.getlist("target_olt_ips") -->
+    <select id="target_olt_ips" name="target_olt_ips" multiple style="display:none;">
+      {% for d in devices %}
+        <option value="{{ d.ip }}" data-gid="{{ d.group_id }}"
+          {% if existing_ips and (d.ip in existing_ips) %}selected{% endif %}>
+          {{ d.name }} ({{ d.ip }}) — {{ d.group_label }}
+        </option>
+      {% endfor %}
+    </select>
 
-      {% if is_superadmin %}
-      <script>
-        (function () {
-          const sel = document.getElementById('target_olt_choice');
-          if (!sel) return;
+    <!-- Multi-select UI (search + checkboxes + chips) -->
+    <div id="olt_msel" class="msel" style="margin-top:0.5rem;">
+      <div id="olt_msel_control" class="msel-control" tabindex="0" role="button" aria-haspopup="listbox" aria-expanded="false">
+        <div id="olt_msel_placeholder" class="msel-placeholder">All OLTs in selected group(s) (default)</div>
+        <div id="olt_msel_tags" class="msel-tags"></div>
+        <div class="msel-caret">▼</div>
+      </div>
 
-          const groupSelect = document.getElementById('device_group_ids'); // new: hidden <select multiple>
-    const groupInputs = Array.from(document.querySelectorAll('input[name="device_group_ids"]')); // legacy fallback
+      <div id="olt_msel_menu" class="msel-menu" hidden>
+        <input id="olt_msel_search" class="msel-search" type="text" placeholder="search..." autocomplete="off" />
+        <div class="msel-item msel-item-all" data-value="__ALL__" role="option" aria-selected="true">
+          <label class="msel-check">
+            <input type="checkbox" id="olt_msel_all_cb" checked />
+            <span>All OLTs (default)</span>
+          </label>
+        </div>
+        <div id="olt_msel_list" class="msel-list" role="listbox" aria-multiselectable="true"></div>
+      </div>
+    </div>
 
-    function selectedGroupIds() {
-      if (groupSelect) {
-        return Array.from(groupSelect.selectedOptions)
-          .map(o => (o.value || '').toLowerCase())
-          .filter(Boolean);
+    <script>
+    (function () {
+      const root = document.getElementById('olt_msel');
+      const selectEl = document.getElementById('target_olt_ips');
+      if (!root || !selectEl) return;
+
+      const control = root.querySelector('#olt_msel_control');
+      const menu = root.querySelector('#olt_msel_menu');
+      const search = root.querySelector('#olt_msel_search');
+      const list = root.querySelector('#olt_msel_list');
+      const allRow = root.querySelector('.msel-item-all');
+      const allCb = root.querySelector('#olt_msel_all_cb');
+      const placeholder = root.querySelector('#olt_msel_placeholder');
+      const tags = root.querySelector('#olt_msel_tags');
+
+      const form = root.closest('form') || document;
+      const groupSelect = form.querySelector('#device_group_ids');
+      const groupInputs = Array.from(form.querySelectorAll('input[name="device_group_ids"]'));
+
+      const optionItems = [];
+
+      function norm(s) {
+        return (s || '').toString().trim().toLowerCase();
       }
-      return groupInputs
-        .filter(i => i.checked)
-        .map(i => (i.value || '').toLowerCase())
-        .filter(Boolean);
-    }
 
-    function updateOptions() {
-      const selected = new Set(selectedGroupIds());
-      const hasGroups = groupSelect ? (selected.size > 0) : ((groupInputs.length === 0) || (selected.size > 0));
+      function extractParenTokens(s) {
+        const out = [];
+        const re = /\(([^)]+)\)/g;
+        let m;
+        while ((m = re.exec(s || '')) !== null) {
+          const t = norm(m[1]);
+          if (t) out.push(t);
+        }
+        return out;
+      }
 
-      Array.from(sel.options).forEach(opt => {
-        if (opt.value === '__ALL__') { opt.hidden = false; return; }
-        const gid = (opt.dataset.gid || '').toLowerCase();
-        if (!hasGroups) { opt.hidden = true; return; }
-        opt.hidden = (selected.size > 0) ? (!selected.has(gid)) : false;
+      function extractNameNoParen(s) {
+        return norm((s || '').replace(/\s*\([^)]*\)\s*/g, ' ').replace(/\s+/g, ' ').trim());
+      }
+
+      function selectedGroupKeys() {
+        const keys = new Set();
+
+        if (groupSelect) {
+          Array.from(groupSelect.selectedOptions || []).forEach(o => {
+            const v = norm(o.value);
+            const t = (o.textContent || '').trim();
+            if (v) keys.add(v);
+            extractParenTokens(t).forEach(x => keys.add(x));
+            const nm = extractNameNoParen(t);
+            if (nm) keys.add(nm);
+          });
+          return keys;
+        }
+
+        groupInputs.filter(i => i && i.checked).forEach(i => {
+          const v = norm(i.value);
+          if (v) keys.add(v);
+        });
+
+        return keys;
+      }
+
+      function oltKeysFromOption(opt) {
+        const keys = new Set();
+        const gid = norm((opt.dataset && opt.dataset.gid) ? opt.dataset.gid : '');
+        if (gid) keys.add(gid);
+
+        const t = (opt.textContent || '').trim();
+        extractParenTokens(t).forEach(x => keys.add(x));
+
+        const parts = t.split('—');
+        if (parts.length > 1) {
+          const glabel = extractNameNoParen(parts.slice(1).join('—'));
+          if (glabel) keys.add(glabel);
+        }
+        return Array.from(keys);
+      }
+
+      function anyKeyMatch(itemKeys, allowedKeys) {
+        if (!allowedKeys || allowedKeys.size === 0) return false;
+        for (const k of itemKeys) {
+          if (allowedKeys.has(k)) return true;
+        }
+        return false;
+      }
+
+      function buildList() {
+        list.innerHTML = '';
+        optionItems.length = 0;
+
+        Array.from(selectEl.options).forEach(opt => {
+          const value = opt.value;
+          const labelFull = (opt.textContent || '').trim();
+          const disp = labelFull.split('—')[0].trim();
+
+          const row = document.createElement('div');
+          row.className = 'msel-item';
+          row.dataset.value = value;
+
+          const label = document.createElement('label');
+          label.className = 'msel-check';
+
+          const cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.checked = opt.selected;
+
+          const span = document.createElement('span');
+          span.textContent = disp;
+
+          const ipSpan = document.createElement('span');
+          ipSpan.className = 'msel-muted';
+          ipSpan.textContent = value;
+
+          label.appendChild(cb);
+          label.appendChild(span);
+          row.appendChild(label);
+          row.appendChild(ipSpan);
+
+          const keys = oltKeysFromOption(opt);
+
+          cb.addEventListener('change', () => {
+            opt.selected = cb.checked;
+            if (cb.checked) allCb.checked = false;
+            syncTags();
+          });
+
+          row.addEventListener('click', (e) => {
+            if (e.target && e.target.tagName && e.target.tagName.toLowerCase() === 'input') return;
+            cb.checked = !cb.checked;
+            cb.dispatchEvent(new Event('change'));
+          });
+
+          list.appendChild(row);
+          optionItems.push({ opt, row, cb, disp, keys });
+        });
+      }
+
+      function syncTags() {
+        tags.innerHTML = '';
+        const selected = optionItems.filter(it => it.opt.selected);
+
+        if (selected.length === 0) {
+          placeholder.style.display = 'block';
+          allCb.checked = true;
+          allRow.setAttribute('aria-selected', 'true');
+        } else {
+          placeholder.style.display = 'none';
+          allCb.checked = false;
+          allRow.setAttribute('aria-selected', 'false');
+
+          selected.forEach(it => {
+            const chip = document.createElement('span');
+            chip.className = 'msel-tag';
+
+            const txt = document.createElement('span');
+            txt.textContent = it.disp;
+
+            const x = document.createElement('button');
+            x.type = 'button';
+            x.className = 'msel-x';
+            x.textContent = '×';
+            x.addEventListener('click', (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              it.opt.selected = false;
+              it.cb.checked = false;
+              syncTags();
+            });
+
+            chip.appendChild(txt);
+            chip.appendChild(x);
+            tags.appendChild(chip);
+          });
+        }
+      }
+
+      function applyFilters() {
+        const hasGroupSelector = !!groupSelect || groupInputs.length > 0;
+        const gids = selectedGroupKeys();
+        const hasGroup = gids.size > 0;
+        const q = norm(search ? search.value : '');
+
+        optionItems.forEach(it => {
+          const matchText = !q || norm(it.disp).includes(q) || norm(it.opt.value).includes(q);
+
+          let allowed = true;
+          if (hasGroupSelector) {
+            allowed = hasGroup ? anyKeyMatch(it.keys, gids) : false;
+          }
+
+          const show = allowed && matchText;
+          it.row.hidden = !show;
+          it.row.style.display = show ? '' : 'none';
+
+          if (hasGroupSelector && !allowed && it.opt.selected) {
+            it.opt.selected = false;
+            it.cb.checked = false;
+          }
+        });
+
+        if (hasGroupSelector && !hasGroup) {
+          allCb.checked = true;
+        }
+
+        syncTags();
+      }
+
+      function openMenu() {
+        applyFilters();
+        menu.hidden = false;
+        control.setAttribute('aria-expanded', 'true');
+        setTimeout(() => search && search.focus(), 0);
+      }
+
+      function closeMenu() {
+        menu.hidden = true;
+        control.setAttribute('aria-expanded', 'false');
+      }
+
+      function toggleMenu() {
+        if (menu.hidden) openMenu(); else closeMenu();
+      }
+
+      control.addEventListener('click', (e) => {
+        e.preventDefault();
+        toggleMenu();
+      });
+      control.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          toggleMenu();
+        }
+        if (e.key === 'Escape') closeMenu();
       });
 
-      if (sel.selectedOptions.length && sel.selectedOptions[0].hidden) {
-        sel.value = '__ALL__';
-      }
+      document.addEventListener('click', (e) => {
+        if (!root.contains(e.target)) closeMenu();
+      });
 
-      // If no group selected, disable dropdown (backend will block save anyway)
-      sel.disabled = !hasGroups;
-    }
+      if (search) search.addEventListener('input', applyFilters);
 
-    if (groupSelect) groupSelect.addEventListener('change', updateOptions);
-    groupInputs.forEach(i => i.addEventListener('change', updateOptions));
-    updateOptions();
-  })();
-</script>
-      {% endif %}
-    </div>
+      allRow.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        optionItems.forEach(it => {
+          it.opt.selected = false;
+          it.cb.checked = false;
+        });
+        allCb.checked = true;
+        syncTags();
+        applyFilters();
+      });
+      allCb.addEventListener('click', (e) => {
+        e.preventDefault();
+        allRow.click();
+      });
+
+      if (groupSelect) groupSelect.addEventListener('change', applyFilters);
+      groupInputs.forEach(i => i.addEventListener('change', applyFilters));
+
+      buildList();
+      applyFilters();
+      syncTags();
+    })();
+    </script>
+
+</div>
 
     <div class="form-row">
       <label for="password">New Password (เว้นว่าง = ไม่เปลี่ยน){% if is_prov %} • (Locked){% endif %}</label>
