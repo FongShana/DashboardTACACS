@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import subprocess
-from flask import Blueprint, render_template, request, redirect, url_for, flash, session
+from flask import Blueprint, render_template, request, redirect, url_for, flash, session, jsonify
 
 import re
 from tacacs_dashboard.services.log_parser import get_last_login_map
@@ -19,6 +19,7 @@ from tacacs_dashboard.services.tacacs_config import _read_env
 from tacacs_dashboard.services.tacacs_apply import generate_check_restart
 from tacacs_dashboard.services.olt_provision import provision_user_on_olt, deprovision_user_on_olt
 from tacacs_dashboard.services.olt_status import get_olt_status
+from tacacs_dashboard.services.zte_template_status import get_zte_template_status, template_label
 from tacacs_dashboard.services.access_control import allowed_device_group_ids
 
 from tacacs_dashboard.services.user_secrets_store import (
@@ -1066,3 +1067,43 @@ def zte_template_switch():
         flash("ยังไม่ได้ตั้งค่า OLT login credentials (โปรดตั้ง OLT_PROVISION_* หรือ OLT_ADMIN_*)", "error")
 
     return redirect(url_for("users.index", tab="zte"))
+
+
+@bp.get("/zte-template-status")
+def zte_template_status():
+    """AJAX endpoint: return current `zte` bind template on a given OLT.
+
+    Security:
+    - superadmin only (same as Emergency switch)
+    - validates that the OLT IP exists in policy and is in scope
+    """
+    role, web_uname, allowed_gids = _current_scope()
+    if role != "superadmin":
+        return jsonify({"ok": False, "error": "forbidden"}), 403
+
+    olt_ip = (request.args.get("ip") or "").strip()
+    if not olt_ip:
+        return jsonify({"ok": False, "error": "missing ip"}), 400
+
+    policy = load_policy()
+    devices = policy.get("devices", []) or []
+    dev = next((d for d in devices if isinstance(d, dict) and str(d.get("ip") or "").strip() == olt_ip), None)
+    if not dev:
+        return jsonify({"ok": False, "error": "unknown device"}), 404
+
+    gid = str(dev.get("group_id") or dev.get("device_group_id") or "").strip().lower()
+    if allowed_gids is not None and gid and gid not in set(allowed_gids):
+        return jsonify({"ok": False, "error": "out of scope"}), 403
+
+    st = get_zte_template_status(olt_ip)
+    return jsonify(
+        {
+            "ok": True,
+            "ip": olt_ip,
+            "template": st.template,
+            "label": template_label(st),
+            "auth_template": st.auth_template,
+            "author_template": st.author_template,
+            "note": (st.note or "")[:200],
+        }
+    )

@@ -111,6 +111,180 @@
   </form>
 </section>
 
+<section class="section">
+  <h2 class="section-title">zte template status</h2>
+  <div class="hint" style="margin-top:0.25rem;">
+    อ่านสถานะจาก <code>show running-config</code> แล้ว parse เฉพาะ <code>system-user → user-name zte</code>
+    (ใช้ provisioning creds จาก <code>OLT_PROVISION_*</code> หรือ fallback <code>OLT_ADMIN_*</code>).
+    ผลลัพธ์มี cache ชั่วคราว (TTL) และมี per-OLT lock เพื่อกันยิง telnet ซ้ำพร้อมกัน.
+  </div>
+
+  <div style="display:flex; gap:0.5rem; margin-top:0.75rem; flex-wrap:wrap;">
+    <button type="button" class="btn btn-primary btn-sm" id="zteTplCheckVisible">Check visible OLTs</button>
+    <button type="button" class="btn btn-secondary btn-sm" id="zteTplReset">Reset</button>
+  </div>
+
+  <div class="table-wrapper" style="margin-top:0.75rem;">
+    <table class="table" id="zteTplTable">
+      <thead>
+        <tr>
+          <th>IP</th>
+          <th>Name</th>
+          <th>Group</th>
+          <th>Template</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in devices %}
+        <tr data-gid="{{ d.group_id }}" data-ip="{{ d.ip }}">
+          <td><code>{{ d.ip }}</code></td>
+          <td>{{ d.name }}</td>
+          <td>{{ d.group_label }}</td>
+          <td class="zte-tpl-cell">
+            <span class="hint" data-state="idle">Not checked</span>
+          </td>
+          <td>
+            <button type="button" class="btn btn-secondary btn-sm zteTplCheck">Check</button>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="5">ยังไม่มี OLT ที่ Online/Bootstrapped ใน scope</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <script>
+    (function () {
+      const selGroup = document.getElementById('olt_group');
+      const table = document.getElementById('zteTplTable');
+      const btnCheckVisible = document.getElementById('zteTplCheckVisible');
+      const btnReset = document.getElementById('zteTplReset');
+      if (!table) return;
+
+      const endpointBase = "{{ url_for('users.zte_template_status') }}";
+
+      function rowVisible(tr) {
+        return !(tr && tr.hidden);
+      }
+
+      function setTplCell(tr, html) {
+        const el = tr.querySelector('.zte-tpl-cell');
+        if (!el) return;
+        el.innerHTML = html;
+      }
+
+      function setIdle(tr) {
+        setTplCell(tr, '<span class="hint" data-state="idle">Not checked</span>');
+      }
+
+      function renderStatus(data) {
+        const t = (data && data.template ? String(data.template) : 'unknown').toLowerCase();
+        const label = (data && data.label) ? String(data.label) : 'Unknown';
+        const note = (data && data.note) ? String(data.note) : '';
+
+        if (t === '128') {
+          return `<span class="status-ok">${label}<span class="status-dot status-dot-ok" title="Template 128"></span></span>`;
+        }
+        if (t === '1') {
+          return `<span class="hint">${label}<span class="status-dot status-dot-unk" title="Template 1 (break-glass)"></span></span>`;
+        }
+        if (t === 'mismatch') {
+          return `<span class="status-fail">${label}<span class="status-dot status-dot-fail" title="Mismatch"></span></span>`;
+        }
+        const safeTitle = note ? ` title="${note.replaceAll('"','\'')}"` : '';
+        return `<span class="hint"${safeTitle}>${label}<span class="status-dot status-dot-unk" title="Unknown"></span></span>`;
+      }
+
+      async function probeOne(tr) {
+        const ip = tr.getAttribute('data-ip');
+        if (!ip) return;
+
+        setTplCell(tr, '<span class="hint">Checking...</span>');
+        try {
+          const r = await fetch(endpointBase + '?ip=' + encodeURIComponent(ip), { credentials: 'same-origin' });
+          const data = await r.json();
+          if (!data || !data.ok) {
+            setTplCell(tr, `<span class="hint">Unknown</span>`);
+            return;
+          }
+          setTplCell(tr, renderStatus(data));
+        } catch (e) {
+          setTplCell(tr, '<span class="hint">Unknown</span>');
+        }
+      }
+
+      // Concurrency-limited runner
+      async function probeRows(rows, concurrency) {
+        const q = rows.slice();
+        const workers = [];
+        const n = Math.max(1, Math.min(concurrency || 3, 5));
+
+        async function worker() {
+          while (q.length) {
+            const tr = q.shift();
+            if (!tr) return;
+            await probeOne(tr);
+          }
+        }
+
+        for (let i = 0; i < n; i++) workers.push(worker());
+        await Promise.all(workers);
+      }
+
+      function applyTableFilter() {
+        const gid = selGroup ? selGroup.value : '';
+        const rows = Array.from(table.querySelectorAll('tbody tr[data-ip]'));
+
+        rows.forEach(tr => {
+          const rg = (tr.getAttribute('data-gid') || '').toLowerCase();
+          if (!gid) {
+            tr.hidden = false;
+          } else if (gid === '__ALL__') {
+            tr.hidden = false;
+          } else {
+            tr.hidden = (rg !== gid.toLowerCase());
+          }
+        });
+      }
+
+      // Hook per-row button
+      Array.from(table.querySelectorAll('button.zteTplCheck')).forEach(btn => {
+        btn.addEventListener('click', async function () {
+          const tr = btn.closest('tr');
+          if (!tr) return;
+          await probeOne(tr);
+        });
+      });
+
+      if (btnCheckVisible) {
+        btnCheckVisible.addEventListener('click', async function () {
+          const rows = Array.from(table.querySelectorAll('tbody tr[data-ip]')).filter(r => rowVisible(r));
+          await probeRows(rows, 3);
+        });
+      }
+
+      if (btnReset) {
+        btnReset.addEventListener('click', function () {
+          Array.from(table.querySelectorAll('tbody tr[data-ip]')).forEach(setIdle);
+        });
+      }
+
+      if (selGroup) {
+        selGroup.addEventListener('change', function () {
+          applyTableFilter();
+        });
+      }
+
+      // Initial filter mirrors the dropdown state
+      applyTableFilter();
+    })();
+  </script>
+</section>
+
 {% else %}
 
 
