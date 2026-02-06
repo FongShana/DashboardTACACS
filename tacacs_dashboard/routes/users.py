@@ -829,7 +829,7 @@ def edit_user_submit(username):
     current_role = (target.get("roles") or target.get("role") or target.get("group") or "").strip() or "OLT_VIEW"
     current_status = (target.get("status") or "Active").strip() or "Active"
 
-    # Protect provisioning account: disallow role/status changes (allow scope changes for superadmin)
+    # Protect provisioning account: disallow role/status/scope changes (role/status/device_group_ids/target_olt_ips)
     if is_prov:
         # Role
         if new_role and new_role != current_role:
@@ -841,32 +841,22 @@ def edit_user_submit(username):
             flash("บัญชี provisioning ถูกล็อก: ไม่อนุญาตให้เปลี่ยน status", "warning")
         new_status = current_status
 
-        # Scope:
-        # - superadmin: allow changing device_group_ids / target_olt_ips
-        # - admin: keep immutable (avoid accidental breakage)
-        if not is_superadmin:
-            if ("device_group_ids" in request.form) or ("device_group_id" in request.form):
-                form_gids = _read_device_group_ids_from_form(policy)
-                if form_gids != existing_gids:
-                    flash("บัญชี provisioning ถูกล็อก: ไม่อนุญาตให้เปลี่ยน device group scope", "warning")
+        # Scope: only warn if the field exists in the submitted form (prevents false warnings for admin UI)
+        if ("device_group_ids" in request.form) or ("device_group_id" in request.form):
+            form_gids = _read_device_group_ids_from_form(policy)
+            if form_gids != existing_gids:
+                flash("บัญชี provisioning ถูกล็อก: ไม่อนุญาตให้เปลี่ยน device group scope", "warning")
 
-            if "target_olt_ips" in request.form:
-                form_ips = _normalize_ip_list(request.form.getlist("target_olt_ips"))
-                if set(form_ips) != set(existing_target_ips):
-                    flash("บัญชี provisioning ถูกล็อก: ไม่อนุญาตให้เปลี่ยน target OLT scope", "warning")
+        if "target_olt_ips" in request.form:
+            form_ips = _normalize_ip_list(request.form.getlist("target_olt_ips"))
+            if set(form_ips) != set(existing_target_ips):
+                flash("บัญชี provisioning ถูกล็อก: ไม่อนุญาตให้เปลี่ยน target OLT scope", "warning")
     # device_group_ids update:
     # - admin: cannot change scope; if user has no device_group_ids, it will be scoped to admin's groups on first edit
     # - superadmin: must assign at least 1 device group (ยกเลิกแนวคิด Unscoped)
-    # - provisioning user: superadmin can change scope (admin still immutable)
+    # - provisioning user: scope is immutable
     if is_prov:
-        if is_superadmin:
-            selected = _read_device_group_ids_from_form(policy)
-            if not selected:
-                flash("กรุณาเลือก Device Group อย่างน้อย 1 กลุ่ม", "error")
-                return redirect(url_for("users.edit_user_form", username=username))
-            device_group_ids_to_set = selected
-        else:
-            device_group_ids_to_set = existing_gids
+        device_group_ids_to_set = existing_gids
     elif allowed_gids is not None:
         # web admin scope check
         if not _user_in_scope(target, allowed_gids):
@@ -884,18 +874,7 @@ def edit_user_submit(username):
         device_group_ids_to_set = selected
 
     # Optional: target OLT subset (online only, must be inside assigned device groups)
-    if is_prov and is_superadmin:
-        # Allow superadmin to narrow/expand provisioning user's target subset (empty = all OLTs in scope)
-        raw_target_ips = _normalize_ip_list(request.form.getlist("target_olt_ips"))
-        allowed_ips = set(_get_olt_ip_list(policy, allowed_group_ids=device_group_ids_to_set))
-        target_ips = [ip for ip in raw_target_ips if ip in allowed_ips]
-
-        if raw_target_ips and not target_ips:
-            flash("OLT ที่เลือกไม่อยู่ใน Device Group ที่กำหนด หรือ OLT ไม่ได้ Online — โปรดเลือกใหม่ (หรือไม่เลือกเลย = ทุก OLT ใน scope)", "error")
-            return redirect(url_for("users.edit_user_form", username=username))
-        if raw_target_ips and len(target_ips) != len(raw_target_ips):
-            flash("บาง OLT ที่เลือกถูกตัดออก (อยู่นอก scope หรือ Offline) — ระบบจะใช้เฉพาะ OLT ที่ Online ใน scope เท่านั้น", "warning")
-    elif is_prov:
+    if is_prov:
         target_ips = existing_target_ips
     else:
         raw_target_ips = _normalize_ip_list(request.form.getlist("target_olt_ips"))
@@ -1036,8 +1015,8 @@ def zte_template_switch():
     - to1  : bind auth/author template 1   (local/break-glass)
     """
     role, web_uname, allowed_gids = _current_scope()
-    if role != "superadmin":
-        flash("Emergency (zte template) ใช้ได้เฉพาะ superadmin เท่านั้น", "error")
+    if role not in ("superadmin", "admin"):
+        flash("Emergency (zte template) ใช้ได้เฉพาะ admin/superadmin เท่านั้น", "error")
         return redirect(url_for("users.index", tab="overview"))
 
     olt_ip = (request.form.get("olt_ip") or "").strip()
@@ -1118,11 +1097,11 @@ def zte_template_status():
     """AJAX endpoint: return current `zte` bind template on a given OLT.
 
     Security:
-    - superadmin only (same as Emergency switch)
+    - admin/superadmin only (same as Emergency switch)
     - validates that the OLT IP exists in policy and is in scope
     """
     role, web_uname, allowed_gids = _current_scope()
-    if role != "superadmin":
+    if role not in ("superadmin", "admin"):
         return jsonify({"ok": False, "error": "forbidden"}), 403
 
     olt_ip = (request.args.get("ip") or "").strip()
