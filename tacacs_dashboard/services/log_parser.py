@@ -10,6 +10,12 @@ from collections import deque
 import heapq
 from zoneinfo import ZoneInfo
 
+# Optional SQLite index (fast log search). Falls back to file scanning if disabled.
+try:
+    from . import log_sqlite
+except Exception:  # pragma: no cover
+    log_sqlite = None
+
 DISPLAY_TZ = ZoneInfo("Asia/Bangkok")  # UTC+7
 
 LOG_DIR = Path("/var/log/tac_plus")
@@ -334,6 +340,22 @@ def get_recent_events(limit: int = 200) -> list[dict]:
     ใช้ในหน้า Logs & Audit (Authentication Logs table)
     รวม: authc + authz + acct + conn
     """
+    # Prefer SQLite index if enabled (keeps .log as source of truth).
+    if log_sqlite is not None and getattr(log_sqlite, "is_enabled", lambda: False)():
+        try:
+            log_sqlite.maybe_ingest_quick(
+                parse_authc=_parse_authc,
+                parse_authz=_parse_authz,
+                parse_acct=_parse_acct,
+                parse_conn=_parse_conn,
+            )
+            out = log_sqlite.query_recent_events(limit=int(limit))
+            if out:
+                return out
+        except Exception:
+            # Fall back to file scan
+            pass
+
     events: list[dict] = []
 
     if not LOG_DIR.exists():
@@ -382,6 +404,26 @@ def get_command_events(
       - apply optional filters (user/device/contains) while scanning
       - return at most `limit` events (sorted newest first)
     """
+
+    # Prefer SQLite index if enabled (fast for historical search)
+    if log_sqlite is not None and getattr(log_sqlite, "is_enabled", lambda: False)():
+        try:
+            log_sqlite.maybe_ingest_quick(
+                parse_authc=_parse_authc,
+                parse_authz=_parse_authz,
+                parse_acct=_parse_acct,
+                parse_conn=_parse_conn,
+            )
+            out = log_sqlite.query_command_events(
+                limit=int(limit),
+                user=(user or ""),
+                device=(device or ""),
+                contains=(contains or ""),
+            )
+            if out:
+                return out
+        except Exception:
+            pass
 
     u = (user or "").strip()
     d = (device or "").strip()
@@ -456,6 +498,21 @@ def get_last_login_map(
     ดึงจาก authc-*.log โดยดู action=login
     - successful_only=True: เอาเฉพาะ ACCEPT
     """
+    # Prefer SQLite index if enabled
+    if log_sqlite is not None and getattr(log_sqlite, "is_enabled", lambda: False)():
+        try:
+            log_sqlite.maybe_ingest_quick(
+                parse_authc=_parse_authc,
+                parse_authz=_parse_authz,
+                parse_acct=_parse_acct,
+                parse_conn=_parse_conn,
+            )
+            out = log_sqlite.query_last_login_map(successful_only=bool(successful_only))
+            if out:
+                return out
+        except Exception:
+            pass
+
     last_time_by_user: dict[str, str] = {}
     last_ts_by_user: dict[str, float] = {}
 

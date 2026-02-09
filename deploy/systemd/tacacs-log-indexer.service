@@ -1,0 +1,15 @@
+[Unit]
+Description=NT TACACS+ Dashboard - Log SQLite Indexer
+After=network.target
+
+[Service]
+Type=oneshot
+User=trainee25
+Group=trainee25
+WorkingDirectory=/home/trainee25/tacacs-web
+
+# Regular runs should be incremental. Run --full manually once for the first index.
+ExecStart=/home/trainee25/tacacs-web/venv/bin/python3 tools/log_indexer.py
+
+# If LOG_SQLITE_ENABLED isn't set, the script exits with code 2 (safe no-op)
+SuccessExitStatus=0 2

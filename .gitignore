@@ -15,6 +15,12 @@ secret.env
 pass.secret
 devices.secret
 
+# Runtime data (SQLite logs index)
+data/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+
 # Logs
 *.log
 .locks/
