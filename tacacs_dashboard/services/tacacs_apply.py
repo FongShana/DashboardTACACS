@@ -29,6 +29,10 @@ APPLY_FAST_LOCK_TIMEOUT = float(os.environ.get("TACACS_APPLY_FAST_TIMEOUT", "0.2
 APPLY_DEBOUNCE_SEC = float(os.environ.get("TACACS_APPLY_DEBOUNCE_SEC", "10"))
 APPLY_DEBOUNCE_MAX_WAIT = float(os.environ.get("TACACS_APPLY_DEBOUNCE_MAX_WAIT", "30"))
 
+APPLY_QUIET_BEFORE_RESTART_SEC = float(os.environ.get("TACACS_APPLY_QUIET_BEFORE_RESTART_SEC", "2"))
+APPLY_MIN_RESTART_INTERVAL_SEC = float(os.environ.get("TACACS_APPLY_MIN_RESTART_INTERVAL_SEC", "0"))
+LAST_RESTART_PATH = LOCK_DIR / "tacacs_apply.last_restart"
+
 
 def _touch_apply_request() -> None:
     LOCK_DIR.mkdir(parents=True, exist_ok=True)
@@ -179,62 +183,112 @@ def restart_tacacs_daemon() -> tuple[bool, str]:
         return False, str(e)
 
 
-def _apply_once(config_path: Path | str = DEFAULT_CONFIG_PATH) -> dict:
+def _apply_build(config_path: Path | str = DEFAULT_CONFIG_PATH) -> dict:
+    """Generate files (atomic if changed) + syntax check. Does NOT restart."""
     cfg_path, line_count, changed = generate_config_file(config_path)
     ok, msg = check_config_syntax(cfg_path)
-
-    restart_ok = False
-    restart_msg = "(skipped)"
-
-    if ok and changed:
-        restart_ok, restart_msg = restart_tacacs_daemon()
-    elif ok and not changed:
-        restart_ok = True
-        restart_msg = "(skipped: no changes)"
-
     return {
         "config_path": cfg_path,
         "line_count": line_count,
         "changed": bool(changed),
         "syntax_ok": ok,
         "syntax_message": msg,
-        "restart_ok": restart_ok,
-        "restart_message": restart_msg,
     }
 
 
+def _read_last_restart_epoch() -> float:
+    try:
+        txt = LAST_RESTART_PATH.read_text(encoding="utf-8", errors="ignore").strip()
+        return float(txt) if txt else 0.0
+    except Exception:
+        return 0.0
+
+
+def _write_last_restart_epoch(ts: float) -> None:
+    try:
+        LOCK_DIR.mkdir(parents=True, exist_ok=True)
+        LAST_RESTART_PATH.write_text(f"{ts:.6f}", encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _wait_min_restart_interval_or_abort(marker_before: float) -> bool:
+    """Sleep until min restart interval passes. If new apply request arrives, abort (return False)."""
+    if APPLY_MIN_RESTART_INTERVAL_SEC <= 0:
+        return True
+
+    last = _read_last_restart_epoch()
+    if last <= 0:
+        return True
+
+    now = time.time()
+    wait = (last + APPLY_MIN_RESTART_INTERVAL_SEC) - now
+    if wait <= 0:
+        return True
+
+    # Sleep in small steps so we can detect new requests.
+    end = time.monotonic() + wait
+    while time.monotonic() < end:
+        time.sleep(0.2)
+        if _apply_request_mtime() != marker_before:
+            return False
+    return True
+
+
 def generate_check_restart(config_path: Path | str = DEFAULT_CONFIG_PATH) -> dict:
-    """Safe multi-user apply: generate -> syntax check -> restart (serialized).
+    """Safe multi-user apply: generate -> syntax check -> restart (serialized & coalesced).
 
-    Behavior (key for scaling to many web users):
-    - Touch a request marker file.
+    Key scaling behaviors:
+    - Touch a request marker for every Apply attempt.
     - Try to acquire the apply lock quickly; if busy, return {"queued": True}.
-    - The lock owner performs an apply once, then if more requests arrived during
-      the run, waits for a short quiet period and performs one final apply.
-
-    Returns a dict that always includes keys similar to the old version.
+    - Coalesce bursts: wait for a short quiet period BEFORE restarting, so multiple edits
+      within a few seconds trigger only one restart (latest config).
+    - Optional minimum restart interval (TACACS_APPLY_MIN_RESTART_INTERVAL_SEC).
     """
     _touch_apply_request()
 
     try:
         with exclusive_lock("tacacs_apply", timeout_sec=APPLY_FAST_LOCK_TIMEOUT, poll_sec=0.05):
-            start_req = _apply_request_mtime()
-            r1 = _apply_once(config_path)
-            end_req = _apply_request_mtime()
+            while True:
+                marker_before = _apply_request_mtime()
 
-            # If there were more requests during the run, debounce and re-apply once.
-            if end_req > start_req:
-                quiet = _wait_for_quiet_requests(
-                    quiet_sec=APPLY_DEBOUNCE_SEC,
-                    max_wait_sec=APPLY_DEBOUNCE_MAX_WAIT,
-                )
-                r2 = _apply_once(config_path)
-                r2["rerun"] = True
-                r2["debounce_quiet"] = bool(quiet)
-                r2["first_result"] = r1
-                return r2
+                r = _apply_build(config_path)
 
-            return r1
+                # If syntax fails, don't restart. Return error info.
+                if not r.get("syntax_ok", False):
+                    r["restart_ok"] = False
+                    r["restart_message"] = "(skipped: syntax error)"
+                    return r
+
+                # No changes -> no restart needed.
+                if not r.get("changed", False):
+                    r["restart_ok"] = True
+                    r["restart_message"] = "(skipped: no changes)"
+                    return r
+
+                # Quiet window to coalesce sequential edits (default 2s; adjustable).
+                if APPLY_QUIET_BEFORE_RESTART_SEC > 0:
+                    _wait_for_quiet_requests(
+                        quiet_sec=APPLY_QUIET_BEFORE_RESTART_SEC,
+                        max_wait_sec=max(APPLY_DEBOUNCE_MAX_WAIT, APPLY_QUIET_BEFORE_RESTART_SEC),
+                    )
+
+                # If any new request arrived during build/quiet, re-run to apply latest config.
+                if _apply_request_mtime() != marker_before:
+                    continue
+
+                # Enforce a minimum restart interval; if new request arrives while waiting, rebuild.
+                if not _wait_min_restart_interval_or_abort(marker_before):
+                    continue
+
+                restart_ok, restart_msg = restart_tacacs_daemon()
+                if restart_ok:
+                    _write_last_restart_epoch(time.time())
+
+                r["restart_ok"] = restart_ok
+                r["restart_message"] = restart_msg
+                r["coalesced_quiet_sec"] = APPLY_QUIET_BEFORE_RESTART_SEC
+                return r
 
     except TimeoutError as e:
         return {
