@@ -62,6 +62,16 @@ def _run_generate_check_restart_and_flash() -> bool:
     explicitly apply config before bootstrapping.
     """
     result = generate_check_restart()
+
+    # If another worker is already applying, we queue this request and return fast
+    # (the lock owner will do a debounced final apply).
+    if result.get("queued"):
+        qmsg = (result.get("message") or "Apply is already running; queued.").strip()
+        flash(f"Apply กำลังทำงานอยู่แล้ว ระบบรับคำขอ Apply เข้าคิวแล้ว: {qmsg}", "info")
+        return False
+
+    if result.get("rerun"):
+        flash("มีคำขอ Apply เข้ามาระหว่างทำงาน ระบบจึง Apply รอบสรุปให้อีกครั้ง (debounce)", "info")
     path = result.get("config_path")
     line_count = int(result.get("line_count") or 0)
 
