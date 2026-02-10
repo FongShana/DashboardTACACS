@@ -50,7 +50,7 @@ def _latest_mtime(patterns: tuple[str, ...]) -> float:
     return latest
 
 
-def _get_recent_auth_events_cached(limit: int = 200) -> list[dict]:
+def _get_recent_auth_events_cached(limit: int = 400) -> list[dict]:
     """Cached wrapper for get_recent_events used by /logs/auth."""
     now = time.time()
     cur_mtime = _latest_mtime(("authc-*.log", "authz-*.log", "acct-*.log"))
@@ -69,7 +69,7 @@ def _get_recent_auth_events_cached(limit: int = 200) -> list[dict]:
     return events
 
 
-def _get_recent_cmd_events_cached(limit: int = 200) -> list[dict]:
+def _get_recent_cmd_events_cached(limit: int = 400) -> list[dict]:
     """Cached wrapper for get_command_events used by /logs/command (fast mode only)."""
     now = time.time()
     cur_mtime = _latest_mtime(("acct-*.log",))
@@ -184,12 +184,12 @@ def auth():
     #   (2) a filtered query (push filters down) for the table/summary
     if start_dt and end_dt:
         # Unfiltered sample for dropdown lists
-        dropdown_events = get_recent_events(limit=2000, start_dt=start_dt, end_dt=end_dt)
+        dropdown_events = get_recent_events(limit=8000, start_dt=start_dt, end_dt=end_dt)
 
         # Filtered query for the table/summary (push down filters before LIMIT)
         if user_filter or device_filter or result_filter:
             filtered_events = get_recent_events(
-                limit=2000,
+                limit=8000,
                 start_dt=start_dt,
                 end_dt=end_dt,
                 user=user_filter,
@@ -202,7 +202,7 @@ def auth():
         events_for_lists = dropdown_events
     else:
         # No date filter: keep fast + cached behavior, then filter in Python
-        events_for_lists = _get_recent_auth_events_cached(limit=200)
+        events_for_lists = _get_recent_auth_events_cached(limit=400)
 
         filtered_events: list[dict] = []
         for e in events_for_lists:
@@ -282,7 +282,7 @@ def command():
     scan_all_cmd = bool(cmd_user_filter or cmd_device_filter or cmd_contains_filter or (start_dt and end_dt))
     if scan_all_cmd:
         command_events = get_command_events(
-            limit=1600,
+            limit=8000,
             scan_all=True,
             user=cmd_user_filter,
             device=cmd_device_filter,
@@ -292,7 +292,7 @@ def command():
         )
     else:
         # Fast mode: micro-cache (mtime-aware) to reduce repeated parsing on refresh storms
-        command_events = _get_recent_cmd_events_cached(limit=200)
+        command_events = _get_recent_cmd_events_cached(limit=400)
 
     # Dropdown lists
     cmd_user_list = sorted({e.get("user") for e in command_events if e.get("user")})

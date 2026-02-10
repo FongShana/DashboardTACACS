@@ -127,7 +127,7 @@ def _event(
     return e
 
 
-def _read_recent_lines(files: list[Path], max_lines_each: int = 2000) -> Iterable[str]:
+def _read_recent_lines(files: list[Path], max_lines_each: int = 8000) -> Iterable[str]:
     """Yield non-empty lines from files.
 
     Streaming implementation to avoid loading entire files into memory.
@@ -375,7 +375,7 @@ def _parse_authz(line: str) -> Optional[dict]:
 
 # ---------- public API (ต้องมีให้ routes import ได้) ----------
 def get_recent_events(
-    limit: int = 200,
+    limit: int = 400,
     *,
     start_dt: Optional[datetime] = None,
     end_dt: Optional[datetime] = None,
@@ -464,13 +464,13 @@ def get_recent_events(
 
 
 def get_command_events(
-    limit: int = 200,
+    limit: int = 400,
     *,
     scan_all: bool = False,
     start_dt: Optional[datetime] = None,
     end_dt: Optional[datetime] = None,
     max_files: int = 4,
-    max_lines_each: int = 6000,
+    max_lines_each: int = 8000,
     user: str = "",
     device: str = "",
     contains: str = "",
@@ -580,7 +580,7 @@ def get_user_stats() -> list[dict]:
     """
     สรุปง่าย ๆ ต่อ user (ใช้ใน card/ตารางสรุป)
     """
-    events = get_recent_events(limit=2000)
+    events = get_recent_events(limit=8000)
     c = Counter(e.get("user") for e in events if e.get("user"))
     return [{"user": u, "count": n} for u, n in c.most_common()]
 
@@ -644,8 +644,8 @@ def get_summary() -> dict:
     """
     ใช้ใน dashboard.py (กัน ImportError)
     """
-    events = get_recent_events(limit=2000)
-    cmd_events = get_command_events(limit=2000)
+    events = get_recent_events(limit=8000)
+    cmd_events = get_command_events(limit=8000)
 
     users = {e.get("user") for e in events if e.get("user")}
     devices = {e.get("device") for e in events if e.get("device")}
@@ -663,7 +663,7 @@ def get_summary() -> dict:
     }
 
 
-def get_all_events(limit: int = 5000) -> list[dict]:
+def get_all_events(limit: int = 8000) -> list[dict]:
     """
     ใช้ใน api.py (กัน ImportError)
     """
