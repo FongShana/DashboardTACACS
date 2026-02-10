@@ -50,8 +50,11 @@ def _latest_mtime(patterns: tuple[str, ...]) -> float:
     return latest
 
 
-def _get_recent_auth_events_cached(limit: int = 400) -> list[dict]:
-    """Cached wrapper for get_recent_events used by /logs/auth."""
+def _get_recent_auth_events_cached(limit: int = 400, *, max_files: int = 4, max_lines_each: int = 6000) -> list[dict]:
+    """Cached wrapper for get_recent_events used by /logs/auth.
+
+    Cache is keyed by (limit, max_files, max_lines_each) to avoid returning a too-small sample.
+    """
     now = time.time()
     cur_mtime = _latest_mtime(("authc-*.log", "authz-*.log", "acct-*.log"))
 
@@ -59,13 +62,31 @@ def _get_recent_auth_events_cached(limit: int = 400) -> list[dict]:
     cached_mtime = float(_AUTH_CACHE.get("mtime") or 0.0)
     cached_events = _AUTH_CACHE.get("events") or []
 
-    if cached_events and (now - ts) < _AUTH_CACHE_TTL_SECONDS and cur_mtime <= cached_mtime:
+    cached_limit = int(_AUTH_CACHE.get("limit") or 0)
+    cached_max_files = int(_AUTH_CACHE.get("max_files") or 0)
+    cached_max_lines = int(_AUTH_CACHE.get("max_lines_each") or 0)
+
+    same_cfg = (
+        cached_limit == int(limit)
+        and cached_max_files == int(max_files)
+        and cached_max_lines == int(max_lines_each)
+    )
+
+    if (
+        cached_events
+        and same_cfg
+        and (now - ts) < _AUTH_CACHE_TTL_SECONDS
+        and cur_mtime <= cached_mtime
+    ):
         return cached_events
 
-    events = get_recent_events(limit=limit)
+    events = get_recent_events(limit=limit, max_files=int(max_files), max_lines_each=int(max_lines_each))
     _AUTH_CACHE["ts"] = now
     _AUTH_CACHE["mtime"] = cur_mtime
     _AUTH_CACHE["events"] = events
+    _AUTH_CACHE["limit"] = int(limit)
+    _AUTH_CACHE["max_files"] = int(max_files)
+    _AUTH_CACHE["max_lines_each"] = int(max_lines_each)
     return events
 
 
@@ -184,12 +205,12 @@ def auth():
     #   (2) a filtered query (push filters down) for the table/summary
     if start_dt and end_dt:
         # Unfiltered sample for dropdown lists
-        dropdown_events = get_recent_events(limit=8000, start_dt=start_dt, end_dt=end_dt)
+        dropdown_events = get_recent_events(limit=6000, start_dt=start_dt, end_dt=end_dt)
 
         # Filtered query for the table/summary (push down filters before LIMIT)
         if user_filter or device_filter or result_filter:
             filtered_events = get_recent_events(
-                limit=8000,
+                limit=6000,
                 start_dt=start_dt,
                 end_dt=end_dt,
                 user=user_filter,
@@ -201,20 +222,33 @@ def auth():
 
         events_for_lists = dropdown_events
     else:
-        # No date filter: keep fast + cached behavior, then filter in Python
-        events_for_lists = _get_recent_auth_events_cached(limit=400)
+        # No date filter: show "all" (within limit) instead of only current-day logs.
+        # Use a wider file window and push user/device/result filters down to the backend
+        # (prevents "missing" older matches when many unrelated events exist).
+        base_limit = 400
+        base_max_files = 90
+        base_max_lines = 6000
 
-        filtered_events: list[dict] = []
-        for e in events_for_lists:
-            if user_filter and e.get("user") != user_filter:
-                continue
-            if device_filter and e.get("device") != device_filter:
-                continue
-            if result_filter and (e.get("result") or "").upper() != result_filter.upper():
-                continue
-            filtered_events.append(e)
+        # Unfiltered sample for dropdown lists
+        events_for_lists = _get_recent_auth_events_cached(
+            limit=base_limit,
+            max_files=base_max_files,
+            max_lines_each=base_max_lines,
+        )
 
-    # Dropdown lists
+        # Filtered query for the table/summary (push down filters before LIMIT)
+        if user_filter or device_filter or result_filter:
+            filtered_events = get_recent_events(
+                limit=base_limit,
+                max_files=base_max_files,
+                max_lines_each=base_max_lines,
+                user=user_filter,
+                device=device_filter,
+                result=result_filter,
+            )
+        else:
+            filtered_events = events_for_lists
+# Dropdown lists
     user_list = sorted({e.get("user") for e in events_for_lists if e.get("user")})
     device_list = sorted({e.get("device") for e in events_for_lists if e.get("device")})
     result_list = sorted(
@@ -282,7 +316,7 @@ def command():
     scan_all_cmd = bool(cmd_user_filter or cmd_device_filter or cmd_contains_filter or (start_dt and end_dt))
     if scan_all_cmd:
         command_events = get_command_events(
-            limit=8000,
+            limit=6000,
             scan_all=True,
             user=cmd_user_filter,
             device=cmd_device_filter,

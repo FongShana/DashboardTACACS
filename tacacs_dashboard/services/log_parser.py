@@ -92,11 +92,11 @@ def _split_ts(line: str) -> tuple[Optional[datetime], str, str]:
 
     if dt:
         dt_local = dt.astimezone(DISPLAY_TZ)
-        time_str = dt_local.strftime("%Y-%m-%d %H:%M:%S")
+        time_str = dt_local.strftime("%Y-%m-%d %H:%M:%S %z")
         return dt_local, time_str, msg
 
     # fallback
-    time_str = ts
+    time_str = f"{ts} {tz}".strip()
     return None, time_str, msg
 
 def _event(
@@ -379,6 +379,8 @@ def get_recent_events(
     *,
     start_dt: Optional[datetime] = None,
     end_dt: Optional[datetime] = None,
+    max_files: int = 4,
+    max_lines_each: int = 6000,
     user: str = "",
     device: str = "",
     result: str = "",
@@ -427,9 +429,9 @@ def get_recent_events(
         ]
     else:
         sources = [
-            ("authc", _latest_files("authc-*.log"), _parse_authc),
-            ("authz", _latest_files("authz-*.log"), _parse_authz),
-            ("acct", _latest_files("acct-*.log"), _parse_acct),
+            ("authc", _latest_files("authc-*.log", max_files=int(max_files)), _parse_authc),
+            ("authz", _latest_files("authz-*.log", max_files=int(max_files)), _parse_authz),
+            ("acct", _latest_files("acct-*.log", max_files=int(max_files)), _parse_acct),
            # ("conn", _latest_files("conn-*.log"), _parse_conn),
         ]
 
@@ -439,7 +441,7 @@ def get_recent_events(
     r_u = r.upper() if r else ""
 
     for _, files, parser in sources:
-        for line in _read_recent_lines(files, max_lines_each=3000):
+        for line in _read_recent_lines(files, max_lines_each=int(max_lines_each)):
             e = parser(line)
             if not e:
                 continue
@@ -470,7 +472,7 @@ def get_command_events(
     start_dt: Optional[datetime] = None,
     end_dt: Optional[datetime] = None,
     max_files: int = 4,
-    max_lines_each: int = 8000,
+    max_lines_each: int = 6000,
     user: str = "",
     device: str = "",
     contains: str = "",
@@ -580,14 +582,14 @@ def get_user_stats() -> list[dict]:
     """
     สรุปง่าย ๆ ต่อ user (ใช้ใน card/ตารางสรุป)
     """
-    events = get_recent_events(limit=8000)
+    events = get_recent_events(limit=6000)
     c = Counter(e.get("user") for e in events if e.get("user"))
     return [{"user": u, "count": n} for u, n in c.most_common()]
 
 def get_last_login_map(
     *,
     max_files: int = 4,
-    max_lines_each: int = 8000,
+    max_lines_each: int = 6000,
     successful_only: bool = True,
 ) -> dict[str, str]:
     """
@@ -644,8 +646,8 @@ def get_summary() -> dict:
     """
     ใช้ใน dashboard.py (กัน ImportError)
     """
-    events = get_recent_events(limit=8000)
-    cmd_events = get_command_events(limit=8000)
+    events = get_recent_events(limit=6000)
+    cmd_events = get_command_events(limit=6000)
 
     users = {e.get("user") for e in events if e.get("user")}
     devices = {e.get("device") for e in events if e.get("device")}
@@ -663,7 +665,7 @@ def get_summary() -> dict:
     }
 
 
-def get_all_events(limit: int = 8000) -> list[dict]:
+def get_all_events(limit: int = 6000) -> list[dict]:
     """
     ใช้ใน api.py (กัน ImportError)
     """
