@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import time
 from collections import Counter
+from datetime import date, datetime, time as dtime, timedelta
+from zoneinfo import ZoneInfo
 
 from flask import Blueprint, render_template, request, redirect, url_for
 
@@ -100,6 +102,54 @@ def _get_cmd_filters() -> tuple[str, str, str]:
     return cmd_user_filter, cmd_device_filter, cmd_contains_filter
 
 
+_DISPLAY_TZ = ZoneInfo("Asia/Bangkok")
+
+def _parse_ymd(s: str) -> date | None:
+    s = (s or "").strip()
+    if not s:
+        return None
+    try:
+        return date.fromisoformat(s)
+    except Exception:
+        return None
+
+
+def _get_date_filters() -> tuple[str, str, datetime | None, datetime | None]:
+    """Parse YYYY-MM-DD date filters from query string.
+
+    Returns:
+      (date_from_str, date_to_str, start_dt_local, end_dt_local_exclusive)
+
+    Behavior:
+      - if only one side is set, treat it as a single-day filter
+      - swap if user gives reversed range
+    """
+    date_from = (request.args.get("date_from") or "").strip()
+    date_to = (request.args.get("date_to") or "").strip()
+
+    d_from = _parse_ymd(date_from)
+    d_to = _parse_ymd(date_to)
+
+    if d_from and not d_to:
+        d_to = d_from
+        date_to = date_from
+    if d_to and not d_from:
+        d_from = d_to
+        date_from = date_to
+
+    if d_from and d_to and d_to < d_from:
+        d_from, d_to = d_to, d_from
+        date_from, date_to = date_to, date_from
+
+    if not d_from or not d_to:
+        return date_from, date_to, None, None
+
+    start = datetime.combine(d_from, dtime(0, 0)).replace(tzinfo=_DISPLAY_TZ)
+    end = datetime.combine(d_to + timedelta(days=1), dtime(0, 0)).replace(tzinfo=_DISPLAY_TZ)
+    return date_from, date_to, start, end
+
+
+
 @bp.route("/")
 def index():
     """Backward-compatible entry point.
@@ -123,9 +173,14 @@ def auth():
     # Filters
     user_filter, device_filter, result_filter = _get_auth_filters()
     cmd_user_filter, cmd_device_filter, cmd_contains_filter = _get_cmd_filters()
+    date_from, date_to, start_dt, end_dt = _get_date_filters()
 
     # Parse only auth/session logs for this page
-    recent_events = _get_recent_auth_events_cached(limit=200)
+    if start_dt and end_dt:
+        # Date filter: bypass micro-cache to avoid cross-range caching
+        recent_events = get_recent_events(limit=2000, start_dt=start_dt, end_dt=end_dt)
+    else:
+        recent_events = _get_recent_auth_events_cached(limit=200)
 
     # Dropdown lists
     user_list = sorted({e.get("user") for e in recent_events if e.get("user")})
@@ -187,6 +242,9 @@ def auth():
         cmd_user_filter=cmd_user_filter,
         cmd_device_filter=cmd_device_filter,
         cmd_contains_filter=cmd_contains_filter,
+        # date filters
+        date_from=date_from,
+        date_to=date_to,
     )
 
 
@@ -195,11 +253,12 @@ def command():
     # Filters (preserve auth filters so the user doesn't lose state)
     user_filter, device_filter, result_filter = _get_auth_filters()
     cmd_user_filter, cmd_device_filter, cmd_contains_filter = _get_cmd_filters()
+    date_from, date_to, start_dt, end_dt = _get_date_filters()
 
     # Command audit logs:
     # - default = recent (fast)
-    # - if any cmd filter provided -> scan all acct logs (bounded top-N by timestamp)
-    scan_all_cmd = bool(cmd_user_filter or cmd_device_filter or cmd_contains_filter)
+    # - if any cmd filter OR date filter provided -> scan historical (or use SQLite index)
+    scan_all_cmd = bool(cmd_user_filter or cmd_device_filter or cmd_contains_filter or (start_dt and end_dt))
     if scan_all_cmd:
         command_events = get_command_events(
             limit=1600,
@@ -207,6 +266,8 @@ def command():
             user=cmd_user_filter,
             device=cmd_device_filter,
             contains=cmd_contains_filter,
+            start_dt=start_dt,
+            end_dt=end_dt,
         )
     else:
         # Fast mode: micro-cache (mtime-aware) to reduce repeated parsing on refresh storms
@@ -255,6 +316,9 @@ def command():
         user_filter=user_filter,
         device_filter=device_filter,
         result_filter=result_filter,
+        # date filters
+        date_from=date_from,
+        date_to=date_to,
     )
 
 

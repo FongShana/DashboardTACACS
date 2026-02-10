@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date, timedelta
 from collections import Counter
 from typing import Optional, Iterable
 from collections import deque
@@ -168,6 +168,45 @@ def _all_files(glob_pat: str) -> list[Path]:
 def _latest_files(glob_pat: str, max_files: int = 4) -> list[Path]:
     files = sorted(LOG_DIR.glob(glob_pat), key=lambda x: x.stat().st_mtime, reverse=True)
     return files[:max_files]
+
+
+def _filename_date(p: Path) -> date | None:
+    """Extract YYYY-MM-DD from log filename like authc-2026-02-09.log"""
+    m = re.search(r"-(\d{4}-\d{2}-\d{2})\.log$", p.name)
+    if not m:
+        return None
+    try:
+        return date.fromisoformat(m.group(1))
+    except Exception:
+        return None
+
+
+def _files_for_range(glob_pat: str, start_dt: datetime, end_dt: datetime, *, buffer_days: int = 1) -> list[Path]:
+    """Select daily log files by filename date within [start, end) (local), with a small buffer."""
+    if not LOG_DIR.exists():
+        return []
+    if not start_dt or not end_dt:
+        return []
+
+    # Convert [start, end) to date range inclusive on filenames
+    start_d = (start_dt.date() - timedelta(days=int(buffer_days)))
+    end_d_inclusive = ((end_dt.date()) + timedelta(days=int(buffer_days)))
+
+    out: list[Path] = []
+    for p in LOG_DIR.glob(glob_pat):
+        fd = _filename_date(p)
+        if not fd:
+            continue
+        if start_d <= fd <= end_d_inclusive:
+            out.append(p)
+
+    # Prefer newest first (consistent with existing behavior)
+    try:
+        out.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+    except Exception:
+        out = sorted(out, reverse=True)
+    return out
+
 
 
 # ---------- parsers ----------
@@ -335,7 +374,7 @@ def _parse_authz(line: str) -> Optional[dict]:
 
 
 # ---------- public API (ต้องมีให้ routes import ได้) ----------
-def get_recent_events(limit: int = 200) -> list[dict]:
+def get_recent_events(limit: int = 200, *, start_dt: Optional[datetime] = None, end_dt: Optional[datetime] = None) -> list[dict]:
     """
     ใช้ในหน้า Logs & Audit (Authentication Logs table)
     รวม: authc + authz + acct + conn
@@ -349,7 +388,9 @@ def get_recent_events(limit: int = 200) -> list[dict]:
                 parse_acct=_parse_acct,
                 parse_conn=_parse_conn,
             )
-            out = log_sqlite.query_recent_events(limit=int(limit))
+            start_ts = start_dt.timestamp() if start_dt else None
+            end_ts = end_dt.timestamp() if end_dt else None
+            out = log_sqlite.query_recent_events(limit=int(limit), start_ts=start_ts, end_ts=end_ts)
             if out:
                 return out
         except Exception:
@@ -360,19 +401,33 @@ def get_recent_events(limit: int = 200) -> list[dict]:
 
     if not LOG_DIR.exists():
         return []
-
-    sources = [
-        ("authc", _latest_files("authc-*.log"), _parse_authc),
-        ("authz", _latest_files("authz-*.log"), _parse_authz),
-        ("acct", _latest_files("acct-*.log"), _parse_acct),
-       # ("conn", _latest_files("conn-*.log"), _parse_conn),
-    ]
+    if start_dt and end_dt:
+        authc_files = _files_for_range("authc-*.log", start_dt, end_dt)
+        authz_files = _files_for_range("authz-*.log", start_dt, end_dt)
+        acct_files = _files_for_range("acct-*.log", start_dt, end_dt)
+        sources = [
+            ("authc", authc_files, _parse_authc),
+            ("authz", authz_files, _parse_authz),
+            ("acct", acct_files, _parse_acct),
+        ]
+    else:
+        sources = [
+            ("authc", _latest_files("authc-*.log"), _parse_authc),
+            ("authz", _latest_files("authz-*.log"), _parse_authz),
+            ("acct", _latest_files("acct-*.log"), _parse_acct),
+           # ("conn", _latest_files("conn-*.log"), _parse_conn),
+        ]
 
     for _, files, parser in sources:
         for line in _read_recent_lines(files, max_lines_each=3000):
             e = parser(line)
             if e:
                 events.append(e)
+
+    if start_dt and end_dt:
+        start_ts = start_dt.timestamp()
+        end_ts = end_dt.timestamp()
+        events = [e for e in events if float(e.get('_ts') or 0.0) >= start_ts and float(e.get('_ts') or 0.0) < end_ts]
 
     events.sort(key=lambda x: x.get("_ts", 0.0), reverse=True)
     out = events[: max(0, int(limit))]
@@ -385,6 +440,8 @@ def get_command_events(
     limit: int = 200,
     *,
     scan_all: bool = False,
+    start_dt: Optional[datetime] = None,
+    end_dt: Optional[datetime] = None,
     max_files: int = 4,
     max_lines_each: int = 6000,
     user: str = "",
@@ -414,11 +471,15 @@ def get_command_events(
                 parse_acct=_parse_acct,
                 parse_conn=_parse_conn,
             )
+            start_ts = start_dt.timestamp() if start_dt else None
+            end_ts = end_dt.timestamp() if end_dt else None
             out = log_sqlite.query_command_events(
                 limit=int(limit),
                 user=(user or ""),
                 device=(device or ""),
                 contains=(contains or ""),
+                start_ts=start_ts,
+                end_ts=end_ts,
             )
             if out:
                 return out
@@ -432,8 +493,12 @@ def get_command_events(
     # Keep only the newest `limit` events to cap memory even when scan_all=True.
     heap: list[tuple[float, int, dict]] = []
     seq = 0
-    files = _all_files("acct-*.log") if scan_all else _latest_files("acct-*.log", max_files=max_files)
-    per_file_lines = 0 if scan_all else max_lines_each
+    if start_dt and end_dt:
+        files = _files_for_range("acct-*.log", start_dt, end_dt)
+        per_file_lines = 0
+    else:
+        files = _all_files("acct-*.log") if scan_all else _latest_files("acct-*.log", max_files=max_files)
+        per_file_lines = 0 if scan_all else max_lines_each
 
     for line in _read_recent_lines(files, max_lines_each=per_file_lines):
         e = _parse_acct(line)
@@ -460,6 +525,11 @@ def get_command_events(
         e["action"] = "command"
 
         ts = float(e.get("_ts") or 0.0)
+        if start_dt and end_dt:
+            start_ts = start_dt.timestamp()
+            end_ts = end_dt.timestamp()
+            if ts <= 0.0 or ts < start_ts or ts >= end_ts:
+                continue
         seq += 1
         item = (ts, seq, e)
 
@@ -571,6 +641,5 @@ def get_all_events(limit: int = 5000) -> list[dict]:
     ใช้ใน api.py (กัน ImportError)
     """
     return get_recent_events(limit=limit)
-
 
 

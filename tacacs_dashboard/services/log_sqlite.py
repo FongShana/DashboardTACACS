@@ -404,23 +404,38 @@ def maybe_ingest_quick(
 # -----------------------------
 
 
-def query_recent_events(limit: int = 200) -> list[dict]:
+
+def query_recent_events(
+    limit: int = 200,
+    *,
+    start_ts: float | None = None,
+    end_ts: float | None = None,
+) -> list[dict]:
     """Return recent auth/session events for Logs/Auth page."""
     if not is_enabled():
         return []
 
+    where = ["source IN ('authc','authz','acct')"]
+    params: list = []
+
+    if start_ts is not None:
+        where.append("ts >= ?")
+        params.append(float(start_ts))
+    if end_ts is not None:
+        where.append("ts < ?")
+        params.append(float(end_ts))
+
+    sql = (
+        "SELECT ts, time_str, user, device, action, result, raw, command "
+        "FROM events WHERE "
+        + " AND ".join(where)
+        + " ORDER BY ts DESC LIMIT ?"
+    )
+    params.append(int(max(0, limit)))
+
     conn = _connect()
     try:
-        rows = conn.execute(
-            """
-            SELECT ts, time_str, user, device, action, result, raw, command
-            FROM events
-            WHERE source IN ('authc','authz','acct')
-            ORDER BY ts DESC
-            LIMIT ?
-            """,
-            (int(max(0, limit)),),
-        ).fetchall()
+        rows = conn.execute(sql, tuple(params)).fetchall()
     finally:
         try:
             conn.close()
@@ -456,6 +471,8 @@ def query_command_events(
     user: str = "",
     device: str = "",
     contains: str = "",
+    start_ts: float | None = None,
+    end_ts: float | None = None,
 ) -> list[dict]:
     """Return command audit events from indexed acct logs."""
 
@@ -468,6 +485,13 @@ def query_command_events(
 
     where = ["(command IS NOT NULL AND command != '')"]
     params: list = []
+
+    if start_ts is not None:
+        where.append("ts >= ?")
+        params.append(float(start_ts))
+    if end_ts is not None:
+        where.append("ts < ?")
+        params.append(float(end_ts))
 
     if u:
         where.append("user = ?")
@@ -516,7 +540,6 @@ def query_command_events(
     for e in out:
         e.pop("_ts", None)
     return out
-
 
 def query_last_login_map(*, successful_only: bool = True) -> dict[str, str]:
     """Return {user: time_str} for last successful login."""

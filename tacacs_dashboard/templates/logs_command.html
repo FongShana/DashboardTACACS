@@ -75,6 +75,18 @@
     <input type="hidden" name="device" value="{{ device_filter }}">
     <input type="hidden" name="result" value="{{ result_filter }}">
 
+
+<div class="filter-item">
+  <label>Date From</label>
+  <input type="date" name="date_from" class="input" value="{{ date_from }}">
+</div>
+
+<div class="filter-item">
+  <label>Date To</label>
+  <input type="date" name="date_to" class="input" value="{{ date_to }}">
+</div>
+
+
     <div class="filter-item">
       <label>User</label>
       <select name="cmd_user" class="input">
@@ -109,7 +121,7 @@
     <div class="filter-actions">
       <button type="submit" class="btn btn-primary">Apply</button>
       <a
-        href="{{ url_for('logs.command', user=user_filter, device=device_filter, result=result_filter) }}"
+        href="{{ url_for('logs.command', user=user_filter, device=device_filter, result=result_filter, date_from=date_from, date_to=date_to) }}"
         class="btn btn-secondary"
       >Clear Command Filter</a>
     </div>
