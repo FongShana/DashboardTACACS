@@ -1,6 +1,7 @@
 # tacacs_dashboard/services/log_sqlite.py
 from __future__ import annotations
 
+
 """SQLite-backed log index for fast log browsing/search in the dashboard.
 
 Key idea:
@@ -27,6 +28,19 @@ NOTE: We intentionally read config from secret.env (like your TACACS generator)
 import os
 import sqlite3
 import time
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+# Display timezone for UI (keep UTC+07 but hide "+0700")
+_DISPLAY_TZ = ZoneInfo("Asia/Bangkok")
+
+def _format_ts(ts: float) -> str:
+    try:
+        dt = datetime.fromtimestamp(float(ts), tz=timezone.utc).astimezone(_DISPLAY_TZ)
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return ""
+
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -461,9 +475,10 @@ def query_recent_events(
 
     out: list[dict] = []
     for ts, time_str, user, device, action, result, raw, command in rows:
+        disp = _format_ts(ts)
         e = {
-            "time": time_str or "",
-            "timestamp": time_str or "",
+            "time": disp,
+            "timestamp": disp,
             "user": user or "",
             "device": device or "",
             "action": action or "",
@@ -540,9 +555,10 @@ def query_command_events(
 
     out: list[dict] = []
     for ts, time_str, user, device, action, result, raw, command in rows:
+        disp = _format_ts(ts)
         e = {
-            "time": time_str or "",
-            "timestamp": time_str or "",
+            "time": disp,
+            "timestamp": disp,
             "user": user or "",
             "device": device or "",
             "action": "command",  # keep UI consistent with old parser

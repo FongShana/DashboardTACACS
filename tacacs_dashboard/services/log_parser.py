@@ -92,11 +92,11 @@ def _split_ts(line: str) -> tuple[Optional[datetime], str, str]:
 
     if dt:
         dt_local = dt.astimezone(DISPLAY_TZ)
-        time_str = dt_local.strftime("%Y-%m-%d %H:%M:%S %z")
+        time_str = dt_local.strftime("%Y-%m-%d %H:%M:%S")
         return dt_local, time_str, msg
 
     # fallback
-    time_str = f"{ts} {tz}".strip()
+    time_str = ts
     return None, time_str, msg
 
 def _event(

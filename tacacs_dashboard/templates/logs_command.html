@@ -69,23 +69,53 @@
   <h2 class="section-title">Command Audit Logs</h2>
 
   <!-- Command filter bar -->
-  <form method="get" class="filter-bar" action="{{ url_for('logs.command') }}">
+  <form method="get" class="filter-bar" action="{{ url_for('logs.command') }}" id="cmd-filter-form">
     <!-- preserve auth filters -->
     <input type="hidden" name="user" value="{{ user_filter }}">
     <input type="hidden" name="device" value="{{ device_filter }}">
     <input type="hidden" name="result" value="{{ result_filter }}">
 
+    {# convert ISO (YYYY-MM-DD) -> dd/mm/yy for display #}
+    {% set df_disp = "" %}
+    {% if date_from and (date_from|length) >= 10 and date_from[4] == "-" %}
+      {% set df_disp = date_from[8:10] ~ "/" ~ date_from[5:7] ~ "/" ~ date_from[2:4] %}
+    {% endif %}
+    {% set dt_disp = "" %}
+    {% if date_to and (date_to|length) >= 10 and date_to[4] == "-" %}
+      {% set dt_disp = date_to[8:10] ~ "/" ~ date_to[5:7] ~ "/" ~ date_to[2:4] %}
+    {% endif %}
 
-<div class="filter-item">
-  <label>Date From</label>
-  <input type="date" name="date_from" class="input" value="{{ date_from }}">
-</div>
+    <div class="filter-item">
+      <label>Date From</label>
+      <input type="hidden" name="date_from" value="{{ date_from }}">
+      <input
+        type="text"
+        name="date_from_ui"
+        class="input"
+        value="{{ df_disp }}"
+        placeholder="dd/mm/yy"
+        inputmode="numeric"
+        autocomplete="off"
+        pattern="^\d{2}\/\d{2}\/(\d{2}|\d{4})$"
+        title="รูปแบบวันที่: dd/mm/yy หรือ dd/mm/yyyy"
+      >
+    </div>
 
-<div class="filter-item">
-  <label>Date To</label>
-  <input type="date" name="date_to" class="input" value="{{ date_to }}">
-</div>
-
+    <div class="filter-item">
+      <label>Date To</label>
+      <input type="hidden" name="date_to" value="{{ date_to }}">
+      <input
+        type="text"
+        name="date_to_ui"
+        class="input"
+        value="{{ dt_disp }}"
+        placeholder="dd/mm/yy"
+        inputmode="numeric"
+        autocomplete="off"
+        pattern="^\d{2}\/\d{2}\/(\d{2}|\d{4})$"
+        title="รูปแบบวันที่: dd/mm/yy หรือ dd/mm/yyyy"
+      >
+    </div>
 
     <div class="filter-item">
       <label>User</label>
@@ -152,7 +182,7 @@
     <table class="table">
       <thead>
         <tr>
-          <th>Time</th>
+          <th>Time (UTC+07)</th>
           <th>User</th>
           <th>Device</th>
           <th>Command</th>
@@ -161,7 +191,14 @@
       <tbody>
         {% for c in command_events %}
         <tr>
-          <td>{{ c.timestamp }}</td>
+          <td>
+            {% set t = (c.timestamp or "") %}
+            {% if t and (t|length) >= 19 and t[4] == "-" and t[7] == "-" %}
+              {{ t[8:10] }}/{{ t[5:7] }}/{{ t[2:4] }} {{ t[11:] }}
+            {% else %}
+              {{ t }}
+            {% endif %}
+          </td>
           <td>{{ c.user }}</td>
           <td>{{ c.device }}</td>
           <td class="text-mono small">{{ c.command }}</td>
@@ -175,5 +212,50 @@
     </table>
   </div>
 </section>
+
+<script>
+(function () {
+  function dmyToIso(s) {
+    s = (s || "").trim();
+    if (!s) return "";
+    var m = /^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/.exec(s);
+    if (!m) return null;
+
+    var dd = String(m[1]).padStart(2, "0");
+    var mm = String(m[2]).padStart(2, "0");
+    var yy = String(m[3]);
+
+    if (yy.length === 2) yy = "20" + yy; // สมมติเป็นปี 20xx
+
+    var d = parseInt(dd, 10);
+    var mo = parseInt(mm, 10);
+    if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+
+    return yy + "-" + mm + "-" + dd;
+  }
+
+  var form = document.getElementById("cmd-filter-form");
+  if (!form) return;
+
+  form.addEventListener("submit", function (ev) {
+    var dfUi = form.querySelector('input[name="date_from_ui"]');
+    var dtUi = form.querySelector('input[name="date_to_ui"]');
+    var df = form.querySelector('input[name="date_from"]');
+    var dt = form.querySelector('input[name="date_to"]');
+
+    var isoFrom = dmyToIso(dfUi ? dfUi.value : "");
+    var isoTo = dmyToIso(dtUi ? dtUi.value : "");
+
+    if (isoFrom === null || isoTo === null) {
+      ev.preventDefault();
+      alert("รูปแบบวันที่ต้องเป็น dd/mm/yy หรือ dd/mm/yyyy");
+      return;
+    }
+
+    if (df) df.value = isoFrom || "";
+    if (dt) dt.value = isoTo || "";
+  });
+})();
+</script>
 
 {% endblock %}
