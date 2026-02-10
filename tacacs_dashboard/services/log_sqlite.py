@@ -410,10 +410,17 @@ def query_recent_events(
     *,
     start_ts: float | None = None,
     end_ts: float | None = None,
+    user: str = "",
+    device: str = "",
+    result: str = "",
 ) -> list[dict]:
     """Return recent auth/session events for Logs/Auth page."""
     if not is_enabled():
         return []
+
+    u = (user or "").strip()
+    d = (device or "").strip()
+    r = (result or "").strip()
 
     where = ["source IN ('authc','authz','acct')"]
     params: list = []
@@ -424,6 +431,16 @@ def query_recent_events(
     if end_ts is not None:
         where.append("ts < ?")
         params.append(float(end_ts))
+
+    if u:
+        where.append("user = ?")
+        params.append(u)
+    if d:
+        where.append("device = ?")
+        params.append(d)
+    if r:
+        where.append("UPPER(result) = UPPER(?)")
+        params.append(r)
 
     sql = (
         "SELECT ts, time_str, user, device, action, result, raw, command "

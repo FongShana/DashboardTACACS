@@ -175,34 +175,55 @@ def auth():
     cmd_user_filter, cmd_device_filter, cmd_contains_filter = _get_cmd_filters()
     date_from, date_to, start_dt, end_dt = _get_date_filters()
 
-    # Parse only auth/session logs for this page
+    # Parse only auth/session logs for this page.
+    # IMPORTANT: when a date range is wide, the total events can be huge.
+    # If we LIMIT first then apply user/device filters in Python, results can look
+    # "missing" (older matches pushed out by newer unrelated events). To keep
+    # filtering correct, we fetch:
+    #   (1) a sample (unfiltered) for dropdown lists
+    #   (2) a filtered query (push filters down) for the table/summary
     if start_dt and end_dt:
-        # Date filter: bypass micro-cache to avoid cross-range caching
-        recent_events = get_recent_events(limit=2000, start_dt=start_dt, end_dt=end_dt)
+        # Unfiltered sample for dropdown lists
+        dropdown_events = get_recent_events(limit=2000, start_dt=start_dt, end_dt=end_dt)
+
+        # Filtered query for the table/summary (push down filters before LIMIT)
+        if user_filter or device_filter or result_filter:
+            filtered_events = get_recent_events(
+                limit=2000,
+                start_dt=start_dt,
+                end_dt=end_dt,
+                user=user_filter,
+                device=device_filter,
+                result=result_filter,
+            )
+        else:
+            filtered_events = dropdown_events
+
+        events_for_lists = dropdown_events
     else:
-        recent_events = _get_recent_auth_events_cached(limit=200)
+        # No date filter: keep fast + cached behavior, then filter in Python
+        events_for_lists = _get_recent_auth_events_cached(limit=200)
+
+        filtered_events: list[dict] = []
+        for e in events_for_lists:
+            if user_filter and e.get("user") != user_filter:
+                continue
+            if device_filter and e.get("device") != device_filter:
+                continue
+            if result_filter and (e.get("result") or "").upper() != result_filter.upper():
+                continue
+            filtered_events.append(e)
 
     # Dropdown lists
-    user_list = sorted({e.get("user") for e in recent_events if e.get("user")})
-    device_list = sorted({e.get("device") for e in recent_events if e.get("device")})
+    user_list = sorted({e.get("user") for e in events_for_lists if e.get("user")})
+    device_list = sorted({e.get("device") for e in events_for_lists if e.get("device")})
     result_list = sorted(
         {
             (e.get("result") or "").upper()
-            for e in recent_events
+            for e in events_for_lists
             if e.get("result")
         }
     )
-
-    # Apply filters
-    filtered_events: list[dict] = []
-    for e in recent_events:
-        if user_filter and e.get("user") != user_filter:
-            continue
-        if device_filter and e.get("device") != device_filter:
-            continue
-        if result_filter and (e.get("result") or "").upper() != result_filter.upper():
-            continue
-        filtered_events.append(e)
 
     # Summary
     total_events = len(filtered_events)

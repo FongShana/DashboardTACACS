@@ -374,7 +374,15 @@ def _parse_authz(line: str) -> Optional[dict]:
 
 
 # ---------- public API (ต้องมีให้ routes import ได้) ----------
-def get_recent_events(limit: int = 200, *, start_dt: Optional[datetime] = None, end_dt: Optional[datetime] = None) -> list[dict]:
+def get_recent_events(
+    limit: int = 200,
+    *,
+    start_dt: Optional[datetime] = None,
+    end_dt: Optional[datetime] = None,
+    user: str = "",
+    device: str = "",
+    result: str = "",
+) -> list[dict]:
     """
     ใช้ในหน้า Logs & Audit (Authentication Logs table)
     รวม: authc + authz + acct + conn
@@ -390,7 +398,14 @@ def get_recent_events(limit: int = 200, *, start_dt: Optional[datetime] = None, 
             )
             start_ts = start_dt.timestamp() if start_dt else None
             end_ts = end_dt.timestamp() if end_dt else None
-            out = log_sqlite.query_recent_events(limit=int(limit), start_ts=start_ts, end_ts=end_ts)
+            out = log_sqlite.query_recent_events(
+                limit=int(limit),
+                start_ts=start_ts,
+                end_ts=end_ts,
+                user=(user or ""),
+                device=(device or ""),
+                result=(result or ""),
+            )
             if out:
                 return out
         except Exception:
@@ -418,11 +433,23 @@ def get_recent_events(limit: int = 200, *, start_dt: Optional[datetime] = None, 
            # ("conn", _latest_files("conn-*.log"), _parse_conn),
         ]
 
+    u = (user or "").strip()
+    d = (device or "").strip()
+    r = (result or "").strip()
+    r_u = r.upper() if r else ""
+
     for _, files, parser in sources:
         for line in _read_recent_lines(files, max_lines_each=3000):
             e = parser(line)
-            if e:
-                events.append(e)
+            if not e:
+                continue
+            if u and (e.get("user") or "") != u:
+                continue
+            if d and (e.get("device") or "") != d:
+                continue
+            if r_u and (e.get("result") or "").upper() != r_u:
+                continue
+            events.append(e)
 
     if start_dt and end_dt:
         start_ts = start_dt.timestamp()
