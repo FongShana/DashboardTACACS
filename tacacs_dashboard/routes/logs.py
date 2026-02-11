@@ -222,22 +222,39 @@ def auth():
 
         events_for_lists = dropdown_events
     else:
-        # No date filter: show "all" (within limit) instead of only current-day logs.
-        # Use a wider file window and push user/device/result filters down to the backend
-        # (prevents "missing" older matches when many unrelated events exist).
-        base_limit = 400
-        base_max_files = 90
-        base_max_lines = 6000
+        # No date filter:
+        # - If there is NO auth filter at all -> "fast mode" (like Command Audit after Clear): show a small
+        #   recent window (limit=400) using the micro-cache.
+        # - If ANY auth filter is set (user/device/result) -> "scan mode": allow up to 6000 results.
+        has_any_filter = bool(user_filter or device_filter or result_filter)
 
-        # Unfiltered sample for dropdown lists
-        events_for_lists = _get_recent_auth_events_cached(
-            limit=base_limit,
-            max_files=base_max_files,
-            max_lines_each=base_max_lines,
-        )
+        if not has_any_filter:
+            # Fast mode (reset state)
+            base_limit = 400
+            base_max_files = 4
+            base_max_lines = 6000
 
-        # Filtered query for the table/summary (push down filters before LIMIT)
-        if user_filter or device_filter or result_filter:
+            events_for_lists = _get_recent_auth_events_cached(
+                limit=base_limit,
+                max_files=base_max_files,
+                max_lines_each=base_max_lines,
+            )
+            filtered_events = events_for_lists
+        else:
+            # Scan mode (any filter selected): show more historical logs within a larger window.
+            base_limit = 6000
+            base_max_files = 90
+            base_max_lines = 12000
+
+            # Unfiltered sample for dropdown lists
+            dropdown_events = get_recent_events(
+                limit=base_limit,
+                max_files=base_max_files,
+                max_lines_each=base_max_lines,
+            )
+            events_for_lists = dropdown_events
+
+            # Filtered query for the table/summary (push down filters before LIMIT)
             filtered_events = get_recent_events(
                 limit=base_limit,
                 max_files=base_max_files,
@@ -246,9 +263,7 @@ def auth():
                 device=device_filter,
                 result=result_filter,
             )
-        else:
-            filtered_events = events_for_lists
-# Dropdown lists
+    # Dropdown lists
     user_list = sorted({e.get("user") for e in events_for_lists if e.get("user")})
     device_list = sorted({e.get("device") for e in events_for_lists if e.get("device")})
     result_list = sorted(
