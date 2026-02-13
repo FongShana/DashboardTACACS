@@ -187,12 +187,6 @@
 
 <section class="section">
   <h2 class="section-title">zte template status</h2>
-  <div class="hint" style="margin-top:0.25rem;">
-    อ่านสถานะจาก <code>show running-config</code> แล้ว parse เฉพาะ <code>system-user → user-name zte</code>
-    (ใช้ provisioning creds จาก <code>OLT_PROVISION_*</code> หรือ fallback <code>OLT_ADMIN_*</code>).
-    ผลลัพธ์มี cache ชั่วคราว (TTL) และมี per-OLT lock เพื่อกันยิง telnet ซ้ำพร้อมกัน.
-  </div>
-
   <div style="display:flex; gap:0.5rem; margin-top:0.75rem; flex-wrap:wrap;">
     <button type="button" class="btn btn-primary btn-sm" id="zteTplCheckVisible">Check visible OLTs</button>
     <button type="button" class="btn btn-secondary btn-sm" id="zteTplReset">Reset</button>
