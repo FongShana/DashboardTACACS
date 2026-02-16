@@ -12,7 +12,7 @@ from tacacs_dashboard.services.device_groups_store import list_device_groups, ge
 
 bp = Blueprint("devices", __name__)
 
-NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{2,31}$")
+NAME_RE = re.compile(r"^[^\W\d_][\w\-\u0E31-\u0E4E]{2,31}$", re.UNICODE)
 
 def _is_valid_ipv4(ip: str) -> bool:
     parts = ip.split(".")
