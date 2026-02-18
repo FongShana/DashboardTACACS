@@ -960,13 +960,31 @@ def edit_user_submit(username):
                 _maybe_deprovision_specific_ips(username, out_scope)
 
         provision_gids = device_group_ids_to_set if device_group_ids_to_set is not None else existing_gids
-
-        # If user sets a target subset, enforce it by removing local stub from other in-scope OLTs.
+        # If user sets a target subset, deprovision ONLY the delta that was previously selected
+        # but is now removed. This avoids mass deprovision across every OLT in-scope (noisy/slow).
         # (Guarded by OLT_AUTO_DEPROVISION)
         if (new_status or "").strip().lower() in ("active", "enable", "enabled") and target_ips:
-            scope_ips = _get_olt_ip_list(policy, allowed_group_ids=provision_gids if provision_gids else None)
-            to_remove = [ip for ip in scope_ips if ip not in set(target_ips)]
-            _maybe_deprovision_specific_ips(username, to_remove)
+            removed: list[str] = []
+            if existing_target_ips:
+                removed = [ip for ip in existing_target_ips if ip not in set(target_ips)]
+            else:
+                # Previously "All OLTs (default)" -> we do NOT know where this user was provisioned.
+                # Default behavior: skip out-of-scope deprovision to avoid large/slow telnet jobs.
+                # If you really want the old behavior, set:
+                #   OLT_AUTO_DEPROVISION_MODE=aggressive
+                mode = (_read_env("OLT_AUTO_DEPROVISION_MODE", "delta") or "delta").strip().lower()
+                if mode in ("aggressive", "scope", "all"):
+                    scope_ips = _get_olt_ip_list(policy, allowed_group_ids=provision_gids if provision_gids else None)
+                    removed = [ip for ip in scope_ips if ip not in set(target_ips)]
+
+            if removed:
+                # Prefer online-only to avoid long timeouts on offline OLTs
+                try:
+                    online_set = set(_get_olt_ip_list(policy, allowed_group_ids=None))
+                except Exception:
+                    online_set = set()
+                removed2 = [ip for ip in removed if (not online_set) or (ip in online_set)]
+                _maybe_deprovision_specific_ips(username, removed2)
 
         _maybe_provision_to_olts(
             username=username,
