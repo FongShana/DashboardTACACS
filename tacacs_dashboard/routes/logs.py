@@ -287,7 +287,7 @@ def auth():
 
         if not has_any_filter:
             # Fast mode (reset state)
-            base_limit = 400
+            base_limit = 6000
             base_max_files = 4
             base_max_lines = 6000
 
@@ -397,7 +397,7 @@ def command():
         )
     else:
         # Fast mode: micro-cache (mtime-aware) to reduce repeated parsing on refresh storms
-        command_events = _get_recent_cmd_events_cached(limit=400)
+        command_events = _get_recent_cmd_events_cached(limit=6000)
 
     # Dropdown lists (from policy.json so options never get 'pushed out')
     cmd_user_list, cmd_device_list = _get_filter_choices_from_policy()
