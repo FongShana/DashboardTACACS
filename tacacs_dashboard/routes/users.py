@@ -223,8 +223,12 @@ def _run_generate_check_restart_and_flash() -> bool:
         flash(f"Apply กำลังทำงานอยู่แล้ว ระบบรับคำขอ Apply เข้าคิวแล้ว: {qmsg}", "info")
         return False
 
-    if result.get("rerun"):
-        flash("มีคำขอ Apply เข้ามาระหว่างทำงาน ระบบจึง Apply รอบสรุปให้อีกครั้ง (debounce)", "info")
+    rerun_count = int(result.get("rerun_count") or 0)
+    if rerun_count > 0 or result.get("coalesced"):
+        flash(
+            f"มีคำขอ Apply เข้ามาระหว่างทำงาน ระบบจึงรวมคำขอและ Apply รอบสรุปให้อีกครั้ง (debounce). rerun={rerun_count}",
+            "info",
+        )
     path = result.get("config_path")
     line_count = int(result.get("line_count") or 0)
 

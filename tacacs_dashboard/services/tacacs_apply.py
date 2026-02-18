@@ -29,6 +29,8 @@ APPLY_FAST_LOCK_TIMEOUT = float(os.environ.get("TACACS_APPLY_FAST_TIMEOUT", "0.2
 APPLY_DEBOUNCE_SEC = float(os.environ.get("TACACS_APPLY_DEBOUNCE_SEC", "10"))
 APPLY_DEBOUNCE_MAX_WAIT = float(os.environ.get("TACACS_APPLY_DEBOUNCE_MAX_WAIT", "30"))
 
+# Short "settle" window before we decide whether we're in a burst.
+# If another Apply arrives during this window, we switch to a longer debounce.
 APPLY_QUIET_BEFORE_RESTART_SEC = float(os.environ.get("TACACS_APPLY_QUIET_BEFORE_RESTART_SEC", "2"))
 APPLY_MIN_RESTART_INTERVAL_SEC = float(os.environ.get("TACACS_APPLY_MIN_RESTART_INTERVAL_SEC", "0"))
 LAST_RESTART_PATH = LOCK_DIR / "tacacs_apply.last_restart"
@@ -91,6 +93,24 @@ def _wait_for_quiet_requests(*, quiet_sec: float, max_wait_sec: float, poll_sec:
             return True
         if (time.monotonic() - start) >= max_wait_sec:
             return False
+
+
+def _sleep_with_abort(duration_sec: float, *, marker_before: float, poll_sec: float = 0.2) -> bool:
+    """Sleep up to duration_sec but return early if a new apply request arrives.
+
+    Returns True if we slept the full duration (no new request), False if aborted
+    early because APPLY_REQUEST_PATH changed.
+    """
+    if duration_sec <= 0:
+        return True
+
+    end = time.monotonic() + float(duration_sec)
+    while time.monotonic() < end:
+        remaining = end - time.monotonic()
+        time.sleep(min(max(poll_sec, 0.05), max(0.0, remaining)))
+        if _apply_request_mtime() != marker_before:
+            return False
+    return True
 
 
 def generate_devices_secret_file(dev_path: Path | str = DEVICES_SECRET_PATH) -> tuple[str, int, bool]:
@@ -249,6 +269,9 @@ def generate_check_restart(config_path: Path | str = DEFAULT_CONFIG_PATH) -> dic
 
     try:
         with exclusive_lock("tacacs_apply", timeout_sec=APPLY_FAST_LOCK_TIMEOUT, poll_sec=0.05):
+            rerun_count = 0
+            coalesced = False
+
             while True:
                 marker_before = _apply_request_mtime()
 
@@ -258,27 +281,40 @@ def generate_check_restart(config_path: Path | str = DEFAULT_CONFIG_PATH) -> dic
                 if not r.get("syntax_ok", False):
                     r["restart_ok"] = False
                     r["restart_message"] = "(skipped: syntax error)"
+                    r["rerun_count"] = rerun_count
+                    r["coalesced"] = coalesced
                     return r
 
                 # No changes -> no restart needed.
                 if not r.get("changed", False):
                     r["restart_ok"] = True
                     r["restart_message"] = "(skipped: no changes)"
+                    r["rerun_count"] = rerun_count
+                    r["coalesced"] = coalesced
                     return r
 
-                # Quiet window to coalesce sequential edits (default 2s; adjustable).
+                # 1) Short settle window: if another Apply arrives quickly, abort early
+                #    and switch into the longer debounce path.
                 if APPLY_QUIET_BEFORE_RESTART_SEC > 0:
-                    _wait_for_quiet_requests(
-                        quiet_sec=APPLY_QUIET_BEFORE_RESTART_SEC,
-                        max_wait_sec=max(APPLY_DEBOUNCE_MAX_WAIT, APPLY_QUIET_BEFORE_RESTART_SEC),
-                    )
+                    _sleep_with_abort(APPLY_QUIET_BEFORE_RESTART_SEC, marker_before=marker_before)
 
-                # If any new request arrived during build/quiet, re-run to apply latest config.
+                # If any new request arrived during build/settle -> rebuild later.
                 if _apply_request_mtime() != marker_before:
+                    coalesced = True
+                    rerun_count += 1
+
+                    # 2) Longer debounce: wait until the request stream is quiet.
+                    if APPLY_DEBOUNCE_SEC > 0:
+                        _wait_for_quiet_requests(
+                            quiet_sec=APPLY_DEBOUNCE_SEC,
+                            max_wait_sec=max(APPLY_DEBOUNCE_MAX_WAIT, APPLY_DEBOUNCE_SEC),
+                        )
                     continue
 
                 # Enforce a minimum restart interval; if new request arrives while waiting, rebuild.
                 if not _wait_min_restart_interval_or_abort(marker_before):
+                    coalesced = True
+                    rerun_count += 1
                     continue
 
                 restart_ok, restart_msg = restart_tacacs_daemon()
@@ -287,7 +323,24 @@ def generate_check_restart(config_path: Path | str = DEFAULT_CONFIG_PATH) -> dic
 
                 r["restart_ok"] = restart_ok
                 r["restart_message"] = restart_msg
-                r["coalesced_quiet_sec"] = APPLY_QUIET_BEFORE_RESTART_SEC
+                r["settle_sec"] = APPLY_QUIET_BEFORE_RESTART_SEC
+                r["debounce_sec"] = APPLY_DEBOUNCE_SEC
+                r["rerun_count"] = rerun_count
+                r["coalesced"] = coalesced
+
+                # If more requests arrived during the restart itself, loop again
+                # (the lock is still held here). This makes queued Apply requests
+                # actually get applied without requiring another manual click.
+                if restart_ok and _apply_request_mtime() != marker_before:
+                    coalesced = True
+                    rerun_count += 1
+                    if APPLY_DEBOUNCE_SEC > 0:
+                        _wait_for_quiet_requests(
+                            quiet_sec=APPLY_DEBOUNCE_SEC,
+                            max_wait_sec=max(APPLY_DEBOUNCE_MAX_WAIT, APPLY_DEBOUNCE_SEC),
+                        )
+                    continue
+
                 return r
 
     except TimeoutError as e:

@@ -75,6 +75,9 @@
     <input type="hidden" name="device" value="{{ device_filter }}">
     <input type="hidden" name="result" value="{{ result_filter }}">
 
+    <!-- keep toggle stable even when checkbox unchecked -->
+    <input type="hidden" name="hide_noise" value="0">
+
     {# convert ISO (YYYY-MM-DD) -> dd/mm/yy for display #}
     {% set df_disp = "" %}
     {% if date_from and (date_from|length) >= 10 and date_from[4] == "-" %}
@@ -148,10 +151,17 @@
       />
     </div>
 
+    <div class="filter-item" style="min-width: 200px;">
+      <label style="display:flex; align-items:center; gap:8px; margin-top: 22px;">
+        <input type="checkbox" name="hide_noise" value="1" {% if hide_noise %}checked{% endif %}>
+        Hide noise users
+      </label>
+    </div>
+
     <div class="filter-actions">
       <button type="submit" class="btn btn-primary">Apply</button>
       <a
-        href="{{ url_for('logs.command', user=user_filter, device=device_filter, result=result_filter, date_from=date_from, date_to=date_to) }}"
+        href="{{ url_for('logs.command', user=user_filter, device=device_filter, result=result_filter, date_from=date_from, date_to=date_to, hide_noise=('1' if hide_noise else None)) }}"
         class="btn btn-secondary"
       >Clear Command Filter</a>
     </div>

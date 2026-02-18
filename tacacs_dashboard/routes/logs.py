@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import os
 import time
 from collections import Counter
 from datetime import date, datetime, time as dtime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from flask import Blueprint, render_template, request, redirect, url_for, session
@@ -19,6 +21,82 @@ from tacacs_dashboard.services.access_control import allowed_device_group_ids, d
 
 
 bp = Blueprint("logs", __name__)
+
+
+# -----------------------------
+# Config helpers (secret.env)
+# -----------------------------
+_BASE_DIR = Path(__file__).resolve().parent.parent.parent
+_SECRET_ENV_PATH = _BASE_DIR / "secret.env"
+
+
+def _read_env(key: str, default: str = "") -> str:
+    v = os.getenv(key)
+    if v is not None and str(v).strip() != "":
+        return str(v).strip()
+
+    if not _SECRET_ENV_PATH.exists():
+        return default
+
+    try:
+        for line in _SECRET_ENV_PATH.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith(key + "="):
+                return line.split("=", 1)[1].strip()
+    except Exception:
+        return default
+
+    return default
+
+
+def _env_bool(key: str, default: bool = False) -> bool:
+    v = (_read_env(key, "1" if default else "0") or "").strip().lower()
+    return v in ("1", "true", "yes", "y", "on")
+
+
+def _parse_bool(v: str | None, default: bool = False) -> bool:
+    if v is None:
+        return bool(default)
+    s = (v or "").strip().lower()
+    if s == "":
+        return bool(default)
+    return s in ("1", "true", "yes", "y", "on")
+
+
+_NOISE_USERS_CACHE: dict = {"ts": 0.0, "mtime": 0.0, "users": set(), "default_hide": False}
+
+
+def _get_noise_users() -> tuple[set[str], bool]:
+    """Return (noise_users_lower_set, default_hide_noise_flag)."""
+    now = time.time()
+    mtime = 0.0
+    try:
+        if _SECRET_ENV_PATH.exists():
+            mtime = _SECRET_ENV_PATH.stat().st_mtime
+    except Exception:
+        mtime = 0.0
+
+    cached_ts = float(_NOISE_USERS_CACHE.get("ts") or 0.0)
+    cached_mtime = float(_NOISE_USERS_CACHE.get("mtime") or 0.0)
+    if (now - cached_ts) < 2.0 and mtime == cached_mtime:
+        return set(_NOISE_USERS_CACHE.get("users") or set()), bool(_NOISE_USERS_CACHE.get("default_hide") or False)
+
+    raw = (_read_env("LOGS_HIDE_USERS", "zte") or "zte").strip()
+    users = set()
+    for part in raw.split(","):
+        u = (part or "").strip().lower()
+        if u:
+            users.add(u)
+
+    default_hide = _env_bool("LOGS_HIDE_NOISE_DEFAULT", default=False)
+
+    _NOISE_USERS_CACHE["ts"] = now
+    _NOISE_USERS_CACHE["mtime"] = mtime
+    _NOISE_USERS_CACHE["users"] = users
+    _NOISE_USERS_CACHE["default_hide"] = default_hide
+    return users, default_hide
 
 
 # -----------------------------
@@ -193,40 +271,92 @@ def _allowed_group_ids_from_session():
         return None
 
 
+_POLICY_CHOICES_CACHE: dict = {}
+
+
 def _get_filter_choices_from_policy():
     """Build dropdown choices from policy.json (not from recent logs).
 
     This prevents 'missing options' when recent log sample is too small.
     Choices are also restricted by device-group scope for admin accounts.
     """
+    allowed = _allowed_group_ids_from_session()
+
+    # Cache by (policy mtime, allowed groups) to reduce per-refresh overhead.
+    pol_mtime = 0.0
+    try:
+        if policy_store.POLICY_PATH.exists():
+            pol_mtime = policy_store.POLICY_PATH.stat().st_mtime
+    except Exception:
+        pol_mtime = 0.0
+
+    allowed_key = "__ALL__" if allowed is None else ",".join(sorted({(g or "").strip().lower() for g in (allowed or []) if (g or "").strip()}))
+    cache_key = f"{pol_mtime:.3f}|{allowed_key}"
+    cached = _POLICY_CHOICES_CACHE.get(cache_key)
+    if cached and (time.time() - float(cached.get("ts") or 0.0)) < 2.0:
+        return cached.get("users") or [], cached.get("devices") or []
+
     policy = policy_store.load_policy() or {}
     users = policy.get("users") or []
     devices = policy.get("devices") or []
 
-    allowed = _allowed_group_ids_from_session()
+    # Noise/users to hide in dropdown (does not affect DB; just UI lists)
+    noise_users, _default_hide = _get_noise_users()
 
     if allowed is None:
-        device_list = sorted({d.get("ip") for d in devices if d.get("ip")})
-        user_list = sorted({u.get("username") for u in users if u.get("username")})
+        device_list = sorted({(d.get("ip") or "").strip() for d in devices if (d.get("ip") or "").strip()})
+        user_list = sorted({(u.get("username") or "").strip() for u in users if (u.get("username") or "").strip()})
     else:
-        allowed_set = set(allowed)
+        allowed_set = set((g or "").strip().lower() for g in (allowed or []) if (g or "").strip())
+
+        # Allowed device IPs for the admin's scope
         device_list = sorted(
-            {d.get("ip") for d in devices if d.get("ip") and device_in_scope(d, allowed_set)}
+            {(d.get("ip") or "").strip() for d in devices if (d.get("ip") or "").strip() and device_in_scope(d, allowed_set)}
         )
+        allowed_ips = set(device_list)
+
         user_list = []
         for u in users:
             uname = (u.get("username") or "").strip()
             if not uname:
                 continue
-            group_ids = u.get("device_group_ids") or []
-            if set(group_ids) & allowed_set:
+
+            gids = [str(x).strip().lower() for x in (u.get("device_group_ids") or []) if str(x).strip()]
+
+            # Backward compatible / "global" users:
+            # - If device_group_ids is missing/empty, treat as global (visible to all admins)
+            in_scope = (len(gids) == 0)
+
+            if not in_scope and (set(gids) & allowed_set):
+                in_scope = True
+
+            # Target OLT scope can grant visibility even if groups aren't set
+            if not in_scope:
+                t_ips = [str(x).strip() for x in (u.get("target_olt_ips") or []) if str(x).strip()]
+                if t_ips and any(ip in allowed_ips for ip in t_ips):
+                    in_scope = True
+
+            if in_scope:
                 user_list.append(uname)
         user_list = sorted(set(user_list))
 
-    # Hide the vendor/system account "zte" to reduce clutter (zte01/zte02 still shown)
-    user_list = [u for u in user_list if u != "zte"]
+    # Hide noisy/system accounts in dropdown
+    user_list = [u for u in user_list if (u or "").strip().lower() not in noise_users]
 
+    _POLICY_CHOICES_CACHE[cache_key] = {"ts": time.time(), "users": user_list, "devices": device_list}
     return user_list, device_list
+
+
+def _filter_out_noise(events: list[dict], noise_users: set[str]) -> list[dict]:
+    if not events or not noise_users:
+        return events
+    out = []
+    for e in events:
+        u = (e.get("user") or "").strip().lower()
+        if u and u in noise_users:
+            continue
+        out.append(e)
+    return out
 
 @bp.route("/")
 def index():
@@ -252,6 +382,10 @@ def auth():
     user_filter, device_filter, result_filter = _get_auth_filters()
     cmd_user_filter, cmd_device_filter, cmd_contains_filter = _get_cmd_filters()
     date_from, date_to, start_dt, end_dt = _get_date_filters()
+
+    noise_users, default_hide_noise = _get_noise_users()
+    hn_vals = request.args.getlist("hide_noise")
+    hide_noise = _parse_bool(hn_vals[-1] if hn_vals else None, default=default_hide_noise)
 
     # Parse only auth/session logs for this page.
     # IMPORTANT: when a date range is wide, the total events can be huge.
@@ -287,7 +421,7 @@ def auth():
 
         if not has_any_filter:
             # Fast mode (reset state)
-            base_limit = 6000
+            base_limit = 400
             base_max_files = 4
             base_max_lines = 6000
 
@@ -320,6 +454,11 @@ def auth():
                 device=device_filter,
                 result=result_filter,
             )
+
+    # Optional: hide noise/system users (both summary and table)
+    if hide_noise:
+        filtered_events = _filter_out_noise(filtered_events, noise_users)
+        events_for_lists = _filter_out_noise(events_for_lists, noise_users)
     # Dropdown lists (from policy.json so options never get 'pushed out')
     user_list, device_list = _get_filter_choices_from_policy()
     result_list = sorted(
@@ -371,6 +510,7 @@ def auth():
         # date filters
         date_from=date_from,
         date_to=date_to,
+        hide_noise=hide_noise,
     )
 
 
@@ -380,6 +520,10 @@ def command():
     user_filter, device_filter, result_filter = _get_auth_filters()
     cmd_user_filter, cmd_device_filter, cmd_contains_filter = _get_cmd_filters()
     date_from, date_to, start_dt, end_dt = _get_date_filters()
+
+    noise_users, default_hide_noise = _get_noise_users()
+    hn_vals = request.args.getlist("hide_noise")
+    hide_noise = _parse_bool(hn_vals[-1] if hn_vals else None, default=default_hide_noise)
 
     # Command audit logs:
     # - default = recent (fast)
@@ -397,7 +541,10 @@ def command():
         )
     else:
         # Fast mode: micro-cache (mtime-aware) to reduce repeated parsing on refresh storms
-        command_events = _get_recent_cmd_events_cached(limit=6000)
+        command_events = _get_recent_cmd_events_cached(limit=400)
+
+    if hide_noise:
+        command_events = _filter_out_noise(command_events, noise_users)
 
     # Dropdown lists (from policy.json so options never get 'pushed out')
     cmd_user_list, cmd_device_list = _get_filter_choices_from_policy()
@@ -444,5 +591,6 @@ def command():
         # date filters
         date_from=date_from,
         date_to=date_to,
+        hide_noise=hide_noise,
     )
 
