@@ -5,13 +5,17 @@ from collections import Counter
 from datetime import date, datetime, time as dtime, timedelta
 from zoneinfo import ZoneInfo
 
-from flask import Blueprint, render_template, request, redirect, url_for
+from flask import Blueprint, render_template, request, redirect, url_for, session
 
 from tacacs_dashboard.services.log_parser import (
     LOG_DIR,
     get_recent_events,
     get_command_events,
 )
+
+from tacacs_dashboard.services import policy_store
+from tacacs_dashboard.services.access_control import allowed_device_group_ids, device_in_scope
+
 
 
 bp = Blueprint("logs", __name__)
@@ -171,6 +175,59 @@ def _get_date_filters() -> tuple[str, str, datetime | None, datetime | None]:
 
 
 
+def _allowed_group_ids_from_session():
+    """Return allowed device_group_ids for current session.
+    - superadmin -> None (no restriction)
+    - admin -> list of allowed group ids
+    """
+    role = (session.get("web_role") or "").strip().lower()
+    web_username = (session.get("web_username") or "").strip()
+    if not web_username:
+        # Should not happen if routes are protected; fall back to no restriction
+        return None
+    if not role:
+        role = "admin"
+    try:
+        return allowed_device_group_ids(role, web_username)
+    except Exception:
+        return None
+
+
+def _get_filter_choices_from_policy():
+    """Build dropdown choices from policy.json (not from recent logs).
+
+    This prevents 'missing options' when recent log sample is too small.
+    Choices are also restricted by device-group scope for admin accounts.
+    """
+    policy = policy_store.load_policy() or {}
+    users = policy.get("users") or []
+    devices = policy.get("devices") or []
+
+    allowed = _allowed_group_ids_from_session()
+
+    if allowed is None:
+        device_list = sorted({d.get("ip") for d in devices if d.get("ip")})
+        user_list = sorted({u.get("username") for u in users if u.get("username")})
+    else:
+        allowed_set = set(allowed)
+        device_list = sorted(
+            {d.get("ip") for d in devices if d.get("ip") and device_in_scope(d, allowed_set)}
+        )
+        user_list = []
+        for u in users:
+            uname = (u.get("username") or "").strip()
+            if not uname:
+                continue
+            group_ids = u.get("device_group_ids") or []
+            if set(group_ids) & allowed_set:
+                user_list.append(uname)
+        user_list = sorted(set(user_list))
+
+    # Hide the vendor/system account "zte" to reduce clutter (zte01/zte02 still shown)
+    user_list = [u for u in user_list if u != "zte"]
+
+    return user_list, device_list
+
 @bp.route("/")
 def index():
     """Backward-compatible entry point.
@@ -263,9 +320,8 @@ def auth():
                 device=device_filter,
                 result=result_filter,
             )
-    # Dropdown lists
-    user_list = sorted({e.get("user") for e in events_for_lists if e.get("user")})
-    device_list = sorted({e.get("device") for e in events_for_lists if e.get("device")})
+    # Dropdown lists (from policy.json so options never get 'pushed out')
+    user_list, device_list = _get_filter_choices_from_policy()
     result_list = sorted(
         {
             (e.get("result") or "").upper()
@@ -343,9 +399,8 @@ def command():
         # Fast mode: micro-cache (mtime-aware) to reduce repeated parsing on refresh storms
         command_events = _get_recent_cmd_events_cached(limit=400)
 
-    # Dropdown lists
-    cmd_user_list = sorted({e.get("user") for e in command_events if e.get("user")})
-    cmd_device_list = sorted({e.get("device") for e in command_events if e.get("device")})
+    # Dropdown lists (from policy.json so options never get 'pushed out')
+    cmd_user_list, cmd_device_list = _get_filter_choices_from_policy()
 
     # Summary
     total_cmd = len(command_events)
@@ -390,5 +445,4 @@ def command():
         date_from=date_from,
         date_to=date_to,
     )
-
 
