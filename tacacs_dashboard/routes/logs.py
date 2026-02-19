@@ -290,7 +290,7 @@ _RESULT_CHOICES_CACHE: dict[str, dict] = {}
 
 def _canonical_auth_results() -> list[str]:
     # Keep commonly-seen values first; allow extras from DB/files to follow.
-    return ["ACCEPT", "REJECT", "OK", "PASS", "FAIL", "SUCCESS", "ERROR"]
+    return ["ACCEPT", "REJECT", "OK"]
 
 
 def _sqlite_distinct_results(*, start_dt: datetime | None, end_dt: datetime | None) -> set[str]:
@@ -324,7 +324,7 @@ def _sqlite_distinct_results(*, start_dt: datetime | None, end_dt: datetime | No
             SELECT DISTINCT result
             FROM events
             WHERE result IS NOT NULL AND TRIM(result) != ''
-              AND source IN ('authc','authz','acct','conn')
+              AND source IN ('authc','authz','acct')
         """
         params: list[object] = []
         if start_dt and end_dt:
