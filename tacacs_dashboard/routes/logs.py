@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import time
 from collections import Counter
 from datetime import date, datetime, time as dtime, timedelta
@@ -17,6 +18,12 @@ from tacacs_dashboard.services.log_parser import (
 
 from tacacs_dashboard.services import policy_store
 from tacacs_dashboard.services.access_control import allowed_device_group_ids, device_in_scope
+
+# Optional SQLite indexer (distinct result choices)
+try:
+    from tacacs_dashboard.services import log_sqlite
+except Exception:  # pragma: no cover
+    log_sqlite = None
 
 
 
@@ -274,6 +281,116 @@ def _allowed_group_ids_from_session():
 _POLICY_CHOICES_CACHE: dict = {}
 
 
+# -----------------------------
+# Result dropdown choices
+# -----------------------------
+
+_RESULT_CHOICES_CACHE: dict[str, dict] = {}
+
+
+def _canonical_auth_results() -> list[str]:
+    # Keep commonly-seen values first; allow extras from DB/files to follow.
+    return ["ACCEPT", "REJECT", "OK", "PASS", "FAIL", "SUCCESS", "ERROR"]
+
+
+def _sqlite_distinct_results(*, start_dt: datetime | None, end_dt: datetime | None) -> set[str]:
+    """Return DISTINCT result values from SQLite (if enabled).
+
+    We scope by auth/session sources (authc/authz/acct/conn) and optional time range.
+    """
+    if not log_sqlite or not getattr(log_sqlite, "is_enabled", None) or not log_sqlite.is_enabled():
+        return set()
+
+    try:
+        dbp = log_sqlite.db_path()
+        if not dbp.exists():
+            return set()
+
+        # Cache key uses DB mtime + optional range to avoid repeated DB hits on refresh storms.
+        mtime = 0.0
+        try:
+            mtime = dbp.stat().st_mtime
+        except Exception:
+            mtime = 0.0
+
+        start_ts = float(start_dt.timestamp()) if start_dt else 0.0
+        end_ts = float(end_dt.timestamp()) if end_dt else 0.0
+        ck = f"{mtime:.3f}|{start_ts:.0f}|{end_ts:.0f}"
+        cached = _RESULT_CHOICES_CACHE.get(ck)
+        if cached and (time.time() - float(cached.get("ts") or 0.0)) < 5.0:
+            return set(cached.get("vals") or [])
+
+        q = """
+            SELECT DISTINCT result
+            FROM events
+            WHERE result IS NOT NULL AND TRIM(result) != ''
+              AND source IN ('authc','authz','acct','conn')
+        """
+        params: list[object] = []
+        if start_dt and end_dt:
+            q += " AND ts >= ? AND ts < ?"
+            params.extend([start_ts, end_ts])
+
+        vals: set[str] = set()
+        conn = sqlite3.connect(str(dbp), timeout=2, check_same_thread=False)
+        try:
+            for (r,) in conn.execute(q, params).fetchall():
+                s = (r or "").strip().upper()
+                if s:
+                    vals.add(s)
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+        _RESULT_CHOICES_CACHE[ck] = {"ts": time.time(), "vals": sorted(vals)}
+        return vals
+    except Exception:
+        return set()
+
+
+def _build_auth_result_list(
+    *,
+    events_for_lists: list[dict],
+    start_dt: datetime | None,
+    end_dt: datetime | None,
+    selected: str,
+) -> list[str]:
+    """Build Result dropdown list.
+
+    Goal: show all meaningful Result values (not only the most recent limited sample),
+    similar to User/Device dropdowns which are policy-based.
+    """
+    observed: set[str] = set()
+
+    # From currently-parsed events (covers cases before SQLite ingest catches up)
+    for e in (events_for_lists or []):
+        r = (e.get("result") or "").strip().upper()
+        if r:
+            observed.add(r)
+
+    # From SQLite distinct results (fast and stable)
+    observed |= _sqlite_distinct_results(start_dt=start_dt, end_dt=end_dt)
+
+    canonical = _canonical_auth_results()
+    canon_set = set(canonical)
+
+    # Keep canonical ordering first, then any extra values alphabetically.
+    extra = sorted(v for v in observed if v not in canon_set)
+    out: list[str] = []
+    for v in canonical:
+        # include canonical always, so UI consistently shows all expected result types
+        out.append(v)
+    out.extend(extra)
+
+    # Ensure currently-selected value is visible even if it isn't in any source (backward compatibility)
+    sel = (selected or "").strip().upper()
+    if sel and sel not in out:
+        out.append(sel)
+    return out
+
+
 def _get_filter_choices_from_policy():
     """Build dropdown choices from policy.json (not from recent logs).
 
@@ -461,12 +578,11 @@ def auth():
         events_for_lists = _filter_out_noise(events_for_lists, noise_users)
     # Dropdown lists (from policy.json so options never get 'pushed out')
     user_list, device_list = _get_filter_choices_from_policy()
-    result_list = sorted(
-        {
-            (e.get("result") or "").upper()
-            for e in events_for_lists
-            if e.get("result")
-        }
+    result_list = _build_auth_result_list(
+        events_for_lists=events_for_lists,
+        start_dt=start_dt,
+        end_dt=end_dt,
+        selected=result_filter,
     )
 
     # Summary
