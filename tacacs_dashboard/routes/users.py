@@ -5,6 +5,7 @@ import subprocess
 from flask import Blueprint, render_template, request, redirect, url_for, flash, session, jsonify
 
 import re
+from tacacs_dashboard.services.locks import exclusive_lock
 from tacacs_dashboard.services.log_parser import get_last_login_map
 from tacacs_dashboard.services.privilege import parse_privilege
 
@@ -29,6 +30,20 @@ from tacacs_dashboard.services.user_secrets_store import (
 )
 
 bp = Blueprint("users", __name__)
+
+def _user_edit_lock_name(username: str) -> str:
+    u = re.sub(r"[^a-zA-Z0-9_.-]+", "_", (username or "").strip())
+    u = (u or "unknown")[:80]
+    return f"user_edit_{u}"
+
+def _user_edit_lock_timeout_sec() -> float:
+    raw = (_read_env("USER_EDIT_LOCK_TIMEOUT_SEC", "45") or "45").strip()
+    try:
+        v = float(raw)
+        return v if v > 0 else 45.0
+    except Exception:
+        return 45.0
+
 
 
 def _current_scope():
@@ -221,7 +236,8 @@ def _run_generate_check_restart_and_flash() -> bool:
     if result.get("queued"):
         qmsg = (result.get("message") or "Apply is already running; queued.").strip()
         flash(f"Apply กำลังทำงานอยู่แล้ว ระบบรับคำขอ Apply เข้าคิวแล้ว: {qmsg}", "info")
-        return False
+        flash("หมายเหตุ: แม้ Apply จะเข้าคิวอยู่ ระบบจะทำ Provision/Deprovision ต่อทันทีเพื่อให้ OLT ทันสถานะล่าสุด", "info")
+        return True
 
     rerun_count = int(result.get("rerun_count") or 0)
     if rerun_count > 0 or result.get("coalesced"):
@@ -707,54 +723,61 @@ def delete_user_form(username: str):
         flash(f"ห้ามลบบัญชี provisioning ({prov_user})", "error")
         return redirect(url_for("users.index"))
 
-    policy = load_policy()
-    users = policy.get("users", [])
-    target = None
-    for u in users:
-        if isinstance(u, dict) and (u.get("username") or "").strip() == username:
-            target = u
-            break
+    try:
+        with exclusive_lock(_user_edit_lock_name(username), timeout_sec=_user_edit_lock_timeout_sec()):
 
-    if not target:
-        flash(f"ไม่พบผู้ใช้ {username}", "error")
+            policy = load_policy()
+            users = policy.get("users", [])
+            target = None
+            for u in users:
+                if isinstance(u, dict) and (u.get("username") or "").strip() == username:
+                    target = u
+                    break
+
+            if not target:
+                flash(f"ไม่พบผู้ใช้ {username}", "error")
+                return redirect(url_for("users.index"))
+
+            # ✅ Scope check: admin ลบได้เฉพาะ user ที่อยู่ใน device groups ของตัวเอง
+            _role, _web_uname, allowed_gids = _current_scope()
+            if allowed_gids is not None and not _user_in_scope(target, allowed_gids):
+                flash("คุณไม่มีสิทธิ์ลบผู้ใช้นี้ (อยู่นอก Device Group ของคุณ)", "error")
+                return redirect(url_for("users.index"))
+
+            user_gids = _normalize_gid_list(target.get("device_group_ids"))
+            user_target_ips = _normalize_ip_list(target.get("target_olt_ips"))
+
+            ok = delete_user(username)
+            if not ok:
+                flash(f"ไม่พบผู้ใช้ {username}", "error")
+                return redirect(url_for("users.index"))
+
+            flash(f"ลบผู้ใช้ {username} เรียบร้อย", "success")
+
+            delete_user_password(username)
+
+            ok2 = _run_generate_check_restart_and_flash()
+            if ok2:
+                if user_target_ips:
+                    # Deprovision only from the explicitly selected target OLT(s) (online only).
+                    try:
+                        online_set = set(_get_olt_ip_list(policy, allowed_group_ids=None))
+                    except Exception:
+                        online_set = set()
+                    ips = [ip for ip in user_target_ips if (not online_set) or (ip in online_set)]
+                    if ips:
+                        _maybe_deprovision_specific_ips(username, ips)
+                else:
+                    # Fallback: if the user was set to "All OLTs (default)", deprovision from all
+                    # currently-online OLTs in the user's device-group scope.
+                    _maybe_deprovision_from_olts(username, device_group_ids=user_gids if user_gids else None)
+
+            return redirect(url_for("users.index"))
+
+
+    except TimeoutError:
+        flash("มีคนกำลังแก้ไข/Provision ผู้ใช้นี้อยู่ (กำลัง Apply/Provision) — กรุณาลองใหม่อีกครั้ง", "warning")
         return redirect(url_for("users.index"))
-
-    # ✅ Scope check: admin ลบได้เฉพาะ user ที่อยู่ใน device groups ของตัวเอง
-    _role, _web_uname, allowed_gids = _current_scope()
-    if allowed_gids is not None and not _user_in_scope(target, allowed_gids):
-        flash("คุณไม่มีสิทธิ์ลบผู้ใช้นี้ (อยู่นอก Device Group ของคุณ)", "error")
-        return redirect(url_for("users.index"))
-
-    user_gids = _normalize_gid_list(target.get("device_group_ids"))
-    user_target_ips = _normalize_ip_list(target.get("target_olt_ips"))
-
-    ok = delete_user(username)
-    if not ok:
-        flash(f"ไม่พบผู้ใช้ {username}", "error")
-        return redirect(url_for("users.index"))
-
-    flash(f"ลบผู้ใช้ {username} เรียบร้อย", "success")
-
-    delete_user_password(username)
-
-    ok2 = _run_generate_check_restart_and_flash()
-    if ok2:
-        if user_target_ips:
-            # Deprovision only from the explicitly selected target OLT(s) (online only).
-            try:
-                online_set = set(_get_olt_ip_list(policy, allowed_group_ids=None))
-            except Exception:
-                online_set = set()
-            ips = [ip for ip in user_target_ips if (not online_set) or (ip in online_set)]
-            if ips:
-                _maybe_deprovision_specific_ips(username, ips)
-        else:
-            # Fallback: if the user was set to "All OLTs (default)", deprovision from all
-            # currently-online OLTs in the user's device-group scope.
-            _maybe_deprovision_from_olts(username, device_group_ids=user_gids if user_gids else None)
-
-    return redirect(url_for("users.index"))
-
 
 @bp.get("/edit/<username>")
 def edit_user_form(username):
@@ -817,189 +840,196 @@ def edit_user_submit(username):
         flash("username ไม่ถูกต้อง", "error")
         return redirect(url_for("users.index"))
 
-    new_role = (request.form.get("role") or "").strip()
-    new_status = (request.form.get("status") or "").strip() or "Active"
+    try:
+        with exclusive_lock(_user_edit_lock_name(username), timeout_sec=_user_edit_lock_timeout_sec()):
 
-    # Optional fields (backward compatible)
-    new_first_name = (request.form.get("first_name") or "").strip()
-    new_last_name = (request.form.get("last_name") or "").strip()
+            new_role = (request.form.get("role") or "").strip()
+            new_status = (request.form.get("status") or "").strip() or "Active"
 
-    new_password = (request.form.get("password") or "").strip()
+            # Optional fields (backward compatible)
+            new_first_name = (request.form.get("first_name") or "").strip()
+            new_last_name = (request.form.get("last_name") or "").strip()
 
-    prov_user = _get_provision_user()
-    is_prov = (username or "").strip().lower() == prov_user.lower()
+            new_password = (request.form.get("password") or "").strip()
 
-    # Protect provisioning account: disallow password changes
-    if is_prov and new_password:
-        flash("บัญชี provisioning ถูกล็อก: ไม่อนุญาตให้เปลี่ยน password", "warning")
-        new_password = ""
+            prov_user = _get_provision_user()
+            is_prov = (username or "").strip().lower() == prov_user.lower()
 
-    if new_password and not is_prov:
-        set_user_password(username, new_password)
+            # Protect provisioning account: disallow password changes
+            if is_prov and new_password:
+                flash("บัญชี provisioning ถูกล็อก: ไม่อนุญาตให้เปลี่ยน password", "warning")
+                new_password = ""
 
-    policy = load_policy()
-    users = policy.get("users", [])
-    roles = policy.get("roles", [])
+            if new_password and not is_prov:
+                set_user_password(username, new_password)
 
-    target = None
-    for u in users:
-        if isinstance(u, dict) and (u.get("username") or "").strip() == username:
-            target = u
-            break
+            policy = load_policy()
+            users = policy.get("users", [])
+            roles = policy.get("roles", [])
 
-    if not target:
-        flash(f"ไม่พบผู้ใช้ {username}", "error")
-        return redirect(url_for("users.index"))
+            target = None
+            for u in users:
+                if isinstance(u, dict) and (u.get("username") or "").strip() == username:
+                    target = u
+                    break
 
-    existing_gids = _normalize_gid_list(target.get("device_group_ids"))
-    existing_target_ips = _normalize_ip_list(target.get("target_olt_ips"))
+            if not target:
+                flash(f"ไม่พบผู้ใช้ {username}", "error")
+                return redirect(url_for("users.index"))
 
-    # ✅ Scope check (admin)
-    _role, _web_uname, allowed_gids = _current_scope()
-    is_superadmin = (_role == "superadmin")
+            existing_gids = _normalize_gid_list(target.get("device_group_ids"))
+            existing_target_ips = _normalize_ip_list(target.get("target_olt_ips"))
+
+            # ✅ Scope check (admin)
+            _role, _web_uname, allowed_gids = _current_scope()
+            is_superadmin = (_role == "superadmin")
 
 
-    current_role = (target.get("roles") or target.get("role") or target.get("group") or "").strip() or "OLT_VIEW"
-    current_status = (target.get("status") or "Active").strip() or "Active"
+            current_role = (target.get("roles") or target.get("role") or target.get("group") or "").strip() or "OLT_VIEW"
+            current_status = (target.get("status") or "Active").strip() or "Active"
 
-    # Protect provisioning account: disallow role/status/scope changes (role/status/device_group_ids/target_olt_ips)
-    if is_prov:
-        # Role
-        if new_role and new_role != current_role:
-            flash("บัญชี provisioning ถูกล็อก: ไม่อนุญาตให้เปลี่ยน role", "warning")
-        new_role = current_role
+            # Protect provisioning account: disallow role/status/scope changes (role/status/device_group_ids/target_olt_ips)
+            if is_prov:
+                # Role
+                if new_role and new_role != current_role:
+                    flash("บัญชี provisioning ถูกล็อก: ไม่อนุญาตให้เปลี่ยน role", "warning")
+                new_role = current_role
 
-        # Status
-        if new_status and (new_status.strip().lower() != current_status.strip().lower()):
-            flash("บัญชี provisioning ถูกล็อก: ไม่อนุญาตให้เปลี่ยน status", "warning")
-        new_status = current_status
+                # Status
+                if new_status and (new_status.strip().lower() != current_status.strip().lower()):
+                    flash("บัญชี provisioning ถูกล็อก: ไม่อนุญาตให้เปลี่ยน status", "warning")
+                new_status = current_status
 
-        # Scope: only warn if the field exists in the submitted form (prevents false warnings for admin UI)
-        if ("device_group_ids" in request.form) or ("device_group_id" in request.form):
-            form_gids = _read_device_group_ids_from_form(policy)
-            if form_gids != existing_gids:
-                flash("บัญชี provisioning ถูกล็อก: ไม่อนุญาตให้เปลี่ยน device group scope", "warning")
+                # Scope: only warn if the field exists in the submitted form (prevents false warnings for admin UI)
+                if ("device_group_ids" in request.form) or ("device_group_id" in request.form):
+                    form_gids = _read_device_group_ids_from_form(policy)
+                    if form_gids != existing_gids:
+                        flash("บัญชี provisioning ถูกล็อก: ไม่อนุญาตให้เปลี่ยน device group scope", "warning")
 
-        if "target_olt_ips" in request.form:
-            form_ips = _normalize_ip_list(request.form.getlist("target_olt_ips"))
-            if set(form_ips) != set(existing_target_ips):
-                flash("บัญชี provisioning ถูกล็อก: ไม่อนุญาตให้เปลี่ยน target OLT scope", "warning")
-    # device_group_ids update:
-    # - admin: cannot change scope; if user has no device_group_ids, it will be scoped to admin's groups on first edit
-    # - superadmin: must assign at least 1 device group (ยกเลิกแนวคิด Unscoped)
-    # - provisioning user: scope is immutable
-    if is_prov:
-        device_group_ids_to_set = existing_gids
-    elif allowed_gids is not None:
-        # web admin scope check
-        if not _user_in_scope(target, allowed_gids):
-            flash("คุณไม่มีสิทธิ์แก้ไขผู้ใช้นี้ (อยู่นอก Device Group ของคุณ)", "error")
+                if "target_olt_ips" in request.form:
+                    form_ips = _normalize_ip_list(request.form.getlist("target_olt_ips"))
+                    if set(form_ips) != set(existing_target_ips):
+                        flash("บัญชี provisioning ถูกล็อก: ไม่อนุญาตให้เปลี่ยน target OLT scope", "warning")
+            # device_group_ids update:
+            # - admin: cannot change scope; if user has no device_group_ids, it will be scoped to admin's groups on first edit
+            # - superadmin: must assign at least 1 device group (ยกเลิกแนวคิด Unscoped)
+            # - provisioning user: scope is immutable
+            if is_prov:
+                device_group_ids_to_set = existing_gids
+            elif allowed_gids is not None:
+                # web admin scope check
+                if not _user_in_scope(target, allowed_gids):
+                    flash("คุณไม่มีสิทธิ์แก้ไขผู้ใช้นี้ (อยู่นอก Device Group ของคุณ)", "error")
+                    return redirect(url_for("users.index"))
+                # หาก user ยังไม่เคยถูก scope (ไม่มี device_group_ids) ให้ยึดตาม group ของ admin ปัจจุบัน
+                device_group_ids_to_set = existing_gids or allowed_gids
+            else:
+                # superadmin: read from form (ต้องเลือกอย่างน้อย 1 group)
+                selected = _read_device_group_ids_from_form(policy)
+
+                if not selected:
+                    flash("กรุณาเลือก Device Group อย่างน้อย 1 กลุ่ม", "error")
+                    return redirect(url_for("users.edit_user_form", username=username))
+                device_group_ids_to_set = selected
+
+            # Optional: target OLT subset (online only, must be inside assigned device groups)
+            if is_prov:
+                target_ips = existing_target_ips
+            else:
+                raw_target_ips = _normalize_ip_list(request.form.getlist("target_olt_ips"))
+                allowed_ips = set(_get_olt_ip_list(policy, allowed_group_ids=device_group_ids_to_set))
+                target_ips = [ip for ip in raw_target_ips if ip in allowed_ips]
+
+                # NOTE: user_edit UI may pre-select all in-scope OLTs for convenience (to let the admin
+                # uncheck specific OLTs). If this user was previously using "All OLTs (default)" (no explicit
+                # target list) and the submitted selection equals all currently-online OLTs in scope, keep it
+                # as default (empty list) to avoid unintentionally "freezing" the scope.
+                if not existing_target_ips and set(target_ips) == allowed_ips:
+                    raw_target_ips = []
+                    target_ips = []
+
+                if raw_target_ips and not target_ips:
+                    flash("OLT ที่เลือกไม่อยู่ใน Device Group ที่กำหนด หรือ OLT ไม่ได้ Online — โปรดเลือกใหม่ (หรือไม่เลือกเลย = ทุก OLT ใน scope)", "error")
+                    return redirect(url_for("users.edit_user_form", username=username))
+                if raw_target_ips and len(target_ips) != len(raw_target_ips):
+                    flash("บาง OLT ที่เลือกถูกตัดออก (อยู่นอก scope หรือ Offline) — ระบบจะใช้เฉพาะ OLT ที่ Online ใน scope เท่านั้น", "warning")
+
+            role_names = {r.get("name") for r in roles if r.get("name")}
+            if role_names and new_role and new_role not in role_names:
+                flash(f"Role {new_role} ไม่มีอยู่ในระบบ", "error")
+                return redirect(url_for("users.edit_user_form", username=username))
+
+            upsert_user(
+                username=username,
+                role=new_role,
+                status=new_status,
+                device_group_ids=device_group_ids_to_set,
+                target_olt_ips=target_ips,
+                first_name=new_first_name,
+                last_name=new_last_name,
+            )
+            flash(f"อัปเดตผู้ใช้ {username} เรียบร้อยแล้ว", "success")
+
+            ok = _run_generate_check_restart_and_flash()
+            if ok:
+                # If superadmin changed scoping to be narrower, optionally deprovision from out-of-scope OLTs
+                if allowed_gids is None and device_group_ids_to_set is not None:
+                    new_gids = _normalize_gid_list(device_group_ids_to_set)
+                    old_gids = existing_gids
+
+                    # only when new scope is explicitly set (non-empty) -> remove access from outside
+                    if new_gids:
+                        all_ips = _get_olt_ip_list(policy, allowed_group_ids=None if not old_gids else old_gids)
+                        in_scope_ips = _get_olt_ip_list(policy, allowed_group_ids=new_gids)
+
+                        out_scope = [ip for ip in all_ips if ip not in set(in_scope_ips)]
+                        _maybe_deprovision_specific_ips(username, out_scope)
+
+                provision_gids = device_group_ids_to_set if device_group_ids_to_set is not None else existing_gids
+                # If user sets a target subset, deprovision ONLY the delta that was previously selected
+                # but is now removed. This avoids mass deprovision across every OLT in-scope (noisy/slow).
+                # (Guarded by OLT_AUTO_DEPROVISION)
+                if (new_status or "").strip().lower() in ("active", "enable", "enabled") and target_ips:
+                    removed: list[str] = []
+                    if existing_target_ips:
+                        removed = [ip for ip in existing_target_ips if ip not in set(target_ips)]
+                    else:
+                        # Previously "All OLTs (default)" -> we do NOT know where this user was provisioned.
+                        # Default behavior: skip out-of-scope deprovision to avoid large/slow telnet jobs.
+                        # If you really want the old behavior, set:
+                        #   OLT_AUTO_DEPROVISION_MODE=aggressive
+                        mode = (_read_env("OLT_AUTO_DEPROVISION_MODE", "delta") or "delta").strip().lower()
+                        if mode in ("aggressive", "scope", "all"):
+                            scope_ips = _get_olt_ip_list(policy, allowed_group_ids=provision_gids if provision_gids else None)
+                            removed = [ip for ip in scope_ips if ip not in set(target_ips)]
+
+                    if removed:
+                        # Prefer online-only to avoid long timeouts on offline OLTs
+                        try:
+                            online_set = set(_get_olt_ip_list(policy, allowed_group_ids=None))
+                        except Exception:
+                            online_set = set()
+                        removed2 = [ip for ip in removed if (not online_set) or (ip in online_set)]
+                        _maybe_deprovision_specific_ips(username, removed2)
+
+                _maybe_provision_to_olts(
+                    username=username,
+                    role=new_role,
+                    status=new_status,
+                    device_group_ids=provision_gids if provision_gids else None,
+                    target_olt_ips=target_ips if target_ips else None,
+                )
+
             return redirect(url_for("users.index"))
-        # หาก user ยังไม่เคยถูก scope (ไม่มี device_group_ids) ให้ยึดตาม group ของ admin ปัจจุบัน
-        device_group_ids_to_set = existing_gids or allowed_gids
-    else:
-        # superadmin: read from form (ต้องเลือกอย่างน้อย 1 group)
-        selected = _read_device_group_ids_from_form(policy)
 
-        if not selected:
-            flash("กรุณาเลือก Device Group อย่างน้อย 1 กลุ่ม", "error")
-            return redirect(url_for("users.edit_user_form", username=username))
-        device_group_ids_to_set = selected
 
-    # Optional: target OLT subset (online only, must be inside assigned device groups)
-    if is_prov:
-        target_ips = existing_target_ips
-    else:
-        raw_target_ips = _normalize_ip_list(request.form.getlist("target_olt_ips"))
-        allowed_ips = set(_get_olt_ip_list(policy, allowed_group_ids=device_group_ids_to_set))
-        target_ips = [ip for ip in raw_target_ips if ip in allowed_ips]
-
-        # NOTE: user_edit UI may pre-select all in-scope OLTs for convenience (to let the admin
-        # uncheck specific OLTs). If this user was previously using "All OLTs (default)" (no explicit
-        # target list) and the submitted selection equals all currently-online OLTs in scope, keep it
-        # as default (empty list) to avoid unintentionally "freezing" the scope.
-        if not existing_target_ips and set(target_ips) == allowed_ips:
-            raw_target_ips = []
-            target_ips = []
-
-        if raw_target_ips and not target_ips:
-            flash("OLT ที่เลือกไม่อยู่ใน Device Group ที่กำหนด หรือ OLT ไม่ได้ Online — โปรดเลือกใหม่ (หรือไม่เลือกเลย = ทุก OLT ใน scope)", "error")
-            return redirect(url_for("users.edit_user_form", username=username))
-        if raw_target_ips and len(target_ips) != len(raw_target_ips):
-            flash("บาง OLT ที่เลือกถูกตัดออก (อยู่นอก scope หรือ Offline) — ระบบจะใช้เฉพาะ OLT ที่ Online ใน scope เท่านั้น", "warning")
-
-    role_names = {r.get("name") for r in roles if r.get("name")}
-    if role_names and new_role and new_role not in role_names:
-        flash(f"Role {new_role} ไม่มีอยู่ในระบบ", "error")
+        # -----------------------
+        # Roles: เหลือไว้แค่ Edit (ตัด Create/Delete ออก)
+        # -----------------------
+    except TimeoutError:
+        flash("มีคนกำลังแก้ไข/Provision ผู้ใช้นี้อยู่ (กำลัง Apply/Provision) — กรุณาลองใหม่อีกครั้ง", "warning")
         return redirect(url_for("users.edit_user_form", username=username))
 
-    upsert_user(
-        username=username,
-        role=new_role,
-        status=new_status,
-        device_group_ids=device_group_ids_to_set,
-        target_olt_ips=target_ips,
-        first_name=new_first_name,
-        last_name=new_last_name,
-    )
-    flash(f"อัปเดตผู้ใช้ {username} เรียบร้อยแล้ว", "success")
-
-    ok = _run_generate_check_restart_and_flash()
-    if ok:
-        # If superadmin changed scoping to be narrower, optionally deprovision from out-of-scope OLTs
-        if allowed_gids is None and device_group_ids_to_set is not None:
-            new_gids = _normalize_gid_list(device_group_ids_to_set)
-            old_gids = existing_gids
-
-            # only when new scope is explicitly set (non-empty) -> remove access from outside
-            if new_gids:
-                all_ips = _get_olt_ip_list(policy, allowed_group_ids=None if not old_gids else old_gids)
-                in_scope_ips = _get_olt_ip_list(policy, allowed_group_ids=new_gids)
-
-                out_scope = [ip for ip in all_ips if ip not in set(in_scope_ips)]
-                _maybe_deprovision_specific_ips(username, out_scope)
-
-        provision_gids = device_group_ids_to_set if device_group_ids_to_set is not None else existing_gids
-        # If user sets a target subset, deprovision ONLY the delta that was previously selected
-        # but is now removed. This avoids mass deprovision across every OLT in-scope (noisy/slow).
-        # (Guarded by OLT_AUTO_DEPROVISION)
-        if (new_status or "").strip().lower() in ("active", "enable", "enabled") and target_ips:
-            removed: list[str] = []
-            if existing_target_ips:
-                removed = [ip for ip in existing_target_ips if ip not in set(target_ips)]
-            else:
-                # Previously "All OLTs (default)" -> we do NOT know where this user was provisioned.
-                # Default behavior: skip out-of-scope deprovision to avoid large/slow telnet jobs.
-                # If you really want the old behavior, set:
-                #   OLT_AUTO_DEPROVISION_MODE=aggressive
-                mode = (_read_env("OLT_AUTO_DEPROVISION_MODE", "delta") or "delta").strip().lower()
-                if mode in ("aggressive", "scope", "all"):
-                    scope_ips = _get_olt_ip_list(policy, allowed_group_ids=provision_gids if provision_gids else None)
-                    removed = [ip for ip in scope_ips if ip not in set(target_ips)]
-
-            if removed:
-                # Prefer online-only to avoid long timeouts on offline OLTs
-                try:
-                    online_set = set(_get_olt_ip_list(policy, allowed_group_ids=None))
-                except Exception:
-                    online_set = set()
-                removed2 = [ip for ip in removed if (not online_set) or (ip in online_set)]
-                _maybe_deprovision_specific_ips(username, removed2)
-
-        _maybe_provision_to_olts(
-            username=username,
-            role=new_role,
-            status=new_status,
-            device_group_ids=provision_gids if provision_gids else None,
-            target_olt_ips=target_ips if target_ips else None,
-        )
-
-    return redirect(url_for("users.index"))
-
-
-# -----------------------
-# Roles: เหลือไว้แค่ Edit (ตัด Create/Delete ออก)
-# -----------------------
 @bp.get("/roles/<name>/edit")
 def edit_role_form(name):
     policy = load_policy()
