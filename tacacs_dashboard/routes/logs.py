@@ -8,7 +8,7 @@ from datetime import date, datetime, time as dtime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from flask import Blueprint, render_template, request, redirect, url_for, session
+from flask import Blueprint, render_template, request, redirect, url_for, session, jsonify
 
 from tacacs_dashboard.services.log_parser import (
     LOG_DIR,
@@ -920,4 +920,34 @@ def command():
         date_to=date_to,
         hide_noise=hide_noise,
     )
+
+
+@bp.route("/filter_choices")
+def filter_choices_api():
+    """AJAX helper: return dropdown choices for User/Device based on Device Group.
+
+    - Uses policy.json (stable) and admin scope restriction.
+    - Does NOT depend on recent logs, so options won't disappear.
+    """
+    group_id = (request.args.get("group") or "").strip().lower()
+
+    # base choices (scope-restricted)
+    user_list, device_list = _get_filter_choices_from_policy()
+
+    # group -> ips mapping (scope-restricted)
+    _groups, group_to_ips = _get_device_groups_and_ips()
+    group_ips = set(group_to_ips.get(group_id, [])) if group_id else set()
+
+    if group_id:
+        # Narrow devices to only the selected group
+        device_list = sorted(group_ips)
+        # Narrow users to those relevant to this group (global / in-group / target-OLT intersects)
+        user_list = _narrow_user_list_to_group(
+            user_list,
+            group_id=group_id,
+            group_ips=group_ips,
+            selected_user="",  # for AJAX we reset if no longer valid
+        )
+
+    return jsonify({"users": user_list, "devices": device_list})
 

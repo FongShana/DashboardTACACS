@@ -121,17 +121,6 @@
     </div>
 
     <div class="filter-item">
-      <label>User</label>
-      <select name="cmd_user" class="input">
-        <option value="">-- All --</option>
-        {% for u in cmd_user_list %}
-        <option value="{{ u }}" {% if u == cmd_user_filter %}selected{% endif %}>{{ u }}</option>
-        {% endfor %}
-      </select>
-    </div>
-
-
-    <div class="filter-item">
       <label>Device Group</label>
       <select name="group" class="input">
         <option value="">-- All --</option>
@@ -145,7 +134,8 @@
         {% endfor %}
       </select>
     </div>
-    <div class="filter-item">
+
+<div class="filter-item">
       <label>Device</label>
       <select name="cmd_device" class="input">
         <option value="">-- All --</option>
@@ -154,6 +144,20 @@
         {% endfor %}
       </select>
     </div>
+
+<div class="filter-item">
+      <label>User</label>
+      <select name="cmd_user" class="input">
+        <option value="">-- All --</option>
+        {% for u in cmd_user_list %}
+        <option value="{{ u }}" {% if u == cmd_user_filter %}selected{% endif %}>{{ u }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+
+    
+    
 
     <div class="filter-item" style="min-width: 280px;">
       <label>Contains</label>
@@ -281,27 +285,82 @@
     if (dt) dt.value = isoTo || "";
   });
 
-  // Auto-refresh dependent dropdowns when Device Group changes
+
+  // AJAX: refresh dependent dropdowns when Device Group changes (no full page reload)
   var groupSel = form.querySelector('select[name="group"]');
+  var userSel = form.querySelector('select[name="cmd_user"]');
+  var devSel = form.querySelector('select[name="cmd_device"]');
+
+  function rebuildSelect(sel, items, keepValue) {
+    if (!sel) return;
+    var current = keepValue || "";
+
+    // Clear existing options
+    while (sel.firstChild) sel.removeChild(sel.firstChild);
+
+    var optAll = document.createElement("option");
+    optAll.value = "";
+    optAll.textContent = "-- All --";
+    sel.appendChild(optAll);
+
+    var hasCurrent = (current === "");
+    (items || []).forEach(function (v) {
+      var opt = document.createElement("option");
+      opt.value = v;
+      opt.textContent = v;
+      if (v === current) {
+        opt.selected = true;
+        hasCurrent = true;
+      }
+      sel.appendChild(opt);
+    });
+
+    // If previous selection no longer exists, reset to All
+    if (!hasCurrent) {
+      sel.value = "";
+    }
+  }
+
+  var _choicesAbort = null;
+
+  function refreshChoices() {
+    if (!groupSel) return;
+    var gid = (groupSel.value || "").trim().toLowerCase();
+
+    // Abort previous in-flight request to avoid races
+    if (_choicesAbort && typeof _choicesAbort.abort === "function") {
+      try { _choicesAbort.abort(); } catch (e) {}
+    }
+    _choicesAbort = (window.AbortController ? new AbortController() : null);
+
+    var baseUrl = "{{ url_for('logs.filter_choices_api') }}";
+    var fullUrl = baseUrl + (baseUrl.indexOf("?") >= 0 ? "&" : "?") + "group=" + encodeURIComponent(gid);
+
+    var prevUser = userSel ? userSel.value : "";
+    var prevDev = devSel ? devSel.value : "";
+
+    fetch(fullUrl, {
+      method: "GET",
+      headers: { "Accept": "application/json" },
+      signal: _choicesAbort ? _choicesAbort.signal : undefined
+    })
+      .then(function (resp) {
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        return resp.json();
+      })
+      .then(function (data) {
+        rebuildSelect(devSel, (data && data.devices) || [], prevDev);
+        rebuildSelect(userSel, (data && data.users) || [], prevUser);
+      })
+      .catch(function (err) {
+        if (err && err.name === "AbortError") return;
+        console.warn("filter_choices fetch failed:", err);
+      });
+  }
+
   if (groupSel) {
     groupSel.addEventListener("change", function () {
-      // Sync date UI -> ISO hidden fields before submitting
-      var dfUi = form.querySelector('input[name="date_from_ui"]');
-      var dtUi = form.querySelector('input[name="date_to_ui"]');
-      var df = form.querySelector('input[name="date_from"]');
-      var dt = form.querySelector('input[name="date_to"]');
-
-      var isoFrom = dmyToIso(dfUi ? dfUi.value : "");
-      var isoTo = dmyToIso(dtUi ? dtUi.value : "");
-      if (isoFrom === null || isoTo === null) {
-        alert("รูปแบบวันที่ต้องเป็น dd/mm/yy หรือ dd/mm/yyyy");
-        return;
-      }
-      if (df) df.value = isoFrom || "";
-      if (dt) dt.value = isoTo || "";
-
-      if (typeof form.requestSubmit === "function") form.requestSubmit();
-      else form.submit();
+      refreshChoices();
     });
   }
 })();
