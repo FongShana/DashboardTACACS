@@ -103,6 +103,21 @@
       </select>
     </div>
 
+
+    <div class="filter-item">
+      <label>Device Group</label>
+      <select name="group" class="input">
+        <option value="">-- All --</option>
+        {% for g in group_list %}
+          {% if (g.name or '') != (g.id or '') %}
+            {% set label = (g.name or '') ~ ' (' ~ (g.id or '') ~ ')' %}
+          {% else %}
+            {% set label = (g.id or '') %}
+          {% endif %}
+          <option value="{{ g.id }}" {% if g.id == group_filter %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
     <div class="filter-item">
       <label>Device</label>
       <select name="device" class="input">

@@ -333,6 +333,37 @@ def _olt_job_summary(out: str, ip: str) -> str:
     return f"=== OLT TELNET JOB: {ip} ==="
 
 
+def _effective_olt_ips_for_user(
+    policy: dict,
+    *,
+    device_group_ids=None,
+    target_olt_ips: list[str] | None = None,
+) -> list[str]:
+    """Compute the effective (online) OLT IP list for a user.
+
+    - device_group_ids scopes which OLTs are eligible
+    - target_olt_ips (if provided and non-empty) further narrows to a subset
+
+    Returns a de-duplicated list.
+    """
+    gids = device_group_ids
+    # Treat empty list as "no scope" (avoid filtering everything out)
+    if isinstance(gids, list) and len(gids) == 0:
+        gids = None
+
+    ips = _get_olt_ip_list(policy, allowed_group_ids=gids)
+
+    if target_olt_ips:
+        tset = set(_normalize_ip_list(target_olt_ips))
+        ips = [ip for ip in ips if ip in tset]
+
+    uniq: list[str] = []
+    for ip in ips:
+        if ip not in uniq:
+            uniq.append(ip)
+    return uniq
+
+
 def _maybe_provision_to_olts(
     username: str,
     role: str,
@@ -386,6 +417,54 @@ def _maybe_provision_to_olts(
                 "success",
             )
 
+        except Exception as e:
+            flash(f"Provision '{username}' -> OLT {ip} ล้มเหลว: {e}", "error")
+
+
+def _maybe_provision_specific_ips(
+    username: str,
+    role: str,
+    status: str,
+    ips: list[str],
+) -> None:
+    """Provision a user to a specific list of OLT IPs (delta provisioning).
+
+    Guarded by OLT_AUTO_PROVISION and user's Active status.
+    """
+    if not ips:
+        return
+
+    # provision เฉพาะ Active
+    if (status or "").strip().lower() not in ("active", "enable", "enabled"):
+        return
+
+    auto = (_read_env("OLT_AUTO_PROVISION", "0") or "0").strip().lower()
+    if auto not in ("1", "true", "yes"):
+        return
+
+    auto_write = (_read_env("OLT_AUTO_WRITE", "0") or "0").strip().lower()
+    save = auto_write in ("1", "true", "yes")
+
+    uniq: list[str] = []
+    for ip in ips:
+        ip2 = (ip or "").strip()
+        if ip2 and ip2 not in uniq:
+            uniq.append(ip2)
+
+    for ip in uniq:
+        try:
+            out = provision_user_on_olt(
+                ip,
+                username=username,
+                role=role,
+                save=save,
+                dry_run=False,
+            )
+            msg = _olt_job_summary(out, ip)
+            flash(
+                f"Provision '{username}' -> OLT {ip} สำเร็จ (save={'ON' if save else 'OFF'}): {msg}",
+                "success",
+            )
         except Exception as e:
             flash(f"Provision '{username}' -> OLT {ip} ล้มเหลว: {e}", "error")
 
@@ -1012,13 +1091,48 @@ def edit_user_submit(username):
                         removed2 = [ip for ip in removed if (not online_set) or (ip in online_set)]
                         _maybe_deprovision_specific_ips(username, removed2)
 
-                _maybe_provision_to_olts(
-                    username=username,
-                    role=new_role,
-                    status=new_status,
-                    device_group_ids=provision_gids if provision_gids else None,
-                    target_olt_ips=target_ips if target_ips else None,
-                )
+                # -----------------------
+                # Delta provisioning (avoid re-provisioning every already-assigned OLT)
+                #
+                # - If role changed OR status just became Active -> provision to the full new set
+                # - Otherwise -> provision only the newly-added OLTs (new_set - old_set)
+                # -----------------------
+                active_set = {"active", "enable", "enabled"}
+                status_was_active = (current_status or "").strip().lower() in active_set
+                status_is_active = (new_status or "").strip().lower() in active_set
+                role_changed = (new_role or "").strip() != (current_role or "").strip()
+
+                if status_is_active:
+                    old_ips = _effective_olt_ips_for_user(
+                        policy,
+                        device_group_ids=existing_gids if existing_gids else None,
+                        target_olt_ips=existing_target_ips if existing_target_ips else None,
+                    )
+                    new_ips = _effective_olt_ips_for_user(
+                        policy,
+                        device_group_ids=provision_gids if provision_gids else None,
+                        target_olt_ips=target_ips if target_ips else None,
+                    )
+
+                    if (not status_was_active) or role_changed:
+                        # Need to push the latest role/templates to every in-scope OLT.
+                        ips_to_prov = new_ips
+                    else:
+                        old_set = set(old_ips)
+                        ips_to_prov = [ip for ip in new_ips if ip not in old_set]
+
+                    if ips_to_prov:
+                        _maybe_provision_specific_ips(
+                            username=username,
+                            role=new_role,
+                            status=new_status,
+                            ips=ips_to_prov,
+                        )
+                    else:
+                        flash(
+                            "Provision: ไม่มี OLT ใหม่ที่ต้องเพิ่ม (delta=0)",
+                            "info",
+                        )
 
             return redirect(url_for("users.index"))
 

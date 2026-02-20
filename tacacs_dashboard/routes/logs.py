@@ -211,6 +211,10 @@ def _get_cmd_filters() -> tuple[str, str, str]:
     cmd_contains_filter = (request.args.get("cmd_contains") or "").strip()
     return cmd_user_filter, cmd_device_filter, cmd_contains_filter
 
+def _get_group_filter() -> str:
+    return (request.args.get('group') or '').strip().lower()
+
+
 
 _DISPLAY_TZ = ZoneInfo("Asia/Bangkok")
 
@@ -279,6 +283,85 @@ def _allowed_group_ids_from_session():
 
 
 _POLICY_CHOICES_CACHE: dict = {}
+
+# Device group dropdown choices + device ip mapping (cached)
+_GROUP_CHOICES_CACHE: dict = {}
+
+
+def _get_device_groups_and_ips():
+    """Return (groups, group_to_ips) from policy.json, restricted by admin scope.
+
+    groups: list of {id, name}
+    group_to_ips: dict[group_id] -> sorted list of device IPs
+    """
+    allowed = _allowed_group_ids_from_session()
+
+    pol_mtime = 0.0
+    try:
+        if policy_store.POLICY_PATH.exists():
+            pol_mtime = policy_store.POLICY_PATH.stat().st_mtime
+    except Exception:
+        pol_mtime = 0.0
+
+    allowed_key = "__ALL__" if allowed is None else ",".join(sorted({(g or "").strip().lower() for g in (allowed or []) if (g or "").strip()}))
+    cache_key = f"{pol_mtime:.3f}|{allowed_key}"
+    cached = _GROUP_CHOICES_CACHE.get(cache_key)
+    if cached and (time.time() - float(cached.get('ts') or 0.0)) < 2.0:
+        return cached.get('groups') or [], cached.get('group_to_ips') or {}
+
+    policy = policy_store.load_policy() or {}
+    groups_raw = policy.get('device_groups') or []
+    devices_raw = policy.get('devices') or []
+
+    groups = []
+    for g in groups_raw:
+        if not isinstance(g, dict):
+            continue
+        gid = (g.get('id') or '').strip().lower()
+        if not gid:
+            continue
+        name = (g.get('name') or gid).strip() or gid
+        groups.append({'id': gid, 'name': name})
+
+    groups.sort(key=lambda x: (x.get('name') or x.get('id') or ''))
+
+    group_to_ips = {}
+    for d in devices_raw:
+        if not isinstance(d, dict):
+            continue
+        gid = (d.get('group_id') or '').strip().lower()
+        ip = (d.get('ip') or '').strip()
+        if not gid or not ip:
+            continue
+        group_to_ips.setdefault(gid, set()).add(ip)
+
+    if allowed is not None:
+        allowed_set = set((g or '').strip().lower() for g in (allowed or []) if (g or '').strip())
+        groups = [g for g in groups if g.get('id') in allowed_set]
+        group_to_ips = {gid: ips for gid, ips in group_to_ips.items() if gid in allowed_set}
+
+    group_to_ips_sorted = {gid: sorted(ips) for gid, ips in group_to_ips.items()}
+
+    _GROUP_CHOICES_CACHE[cache_key] = {
+        'ts': time.time(),
+        'groups': groups,
+        'group_to_ips': group_to_ips_sorted,
+    }
+    return groups, group_to_ips_sorted
+
+
+def _filter_events_by_group(events: list[dict], group_ips: set[str]) -> list[dict]:
+    if not events:
+        return events
+    if not group_ips:
+        # group filter is active but group has no devices -> no results
+        return []
+    out = []
+    for e in events:
+        dev = (e.get('device') or '').strip()
+        if dev and dev in group_ips:
+            out.append(e)
+    return out
 
 
 # -----------------------------
@@ -500,6 +583,10 @@ def auth():
     cmd_user_filter, cmd_device_filter, cmd_contains_filter = _get_cmd_filters()
     date_from, date_to, start_dt, end_dt = _get_date_filters()
 
+    group_filter = _get_group_filter()
+    group_list, group_to_ips = _get_device_groups_and_ips()
+    group_ips = set(group_to_ips.get(group_filter, [])) if group_filter else set()
+
     noise_users, default_hide_noise = _get_noise_users()
     hn_vals = request.args.getlist("hide_noise")
     hide_noise = _parse_bool(hn_vals[-1] if hn_vals else None, default=default_hide_noise)
@@ -534,7 +621,7 @@ def auth():
         # - If there is NO auth filter at all -> "fast mode" (like Command Audit after Clear): show a small
         #   recent window (limit=400) using the micro-cache.
         # - If ANY auth filter is set (user/device/result) -> "scan mode": allow up to 6000 results.
-        has_any_filter = bool(user_filter or device_filter or result_filter)
+        has_any_filter = bool(user_filter or device_filter or result_filter or group_filter)
 
         if not has_any_filter:
             # Fast mode (reset state)
@@ -576,8 +663,18 @@ def auth():
     if hide_noise:
         filtered_events = _filter_out_noise(filtered_events, noise_users)
         events_for_lists = _filter_out_noise(events_for_lists, noise_users)
+    # Optional: filter by Device Group (applies to both summary and table)
+    if group_filter:
+        filtered_events = _filter_events_by_group(filtered_events, group_ips)
+        events_for_lists = _filter_events_by_group(events_for_lists, group_ips)
     # Dropdown lists (from policy.json so options never get 'pushed out')
     user_list, device_list = _get_filter_choices_from_policy()
+    if group_filter:
+        # Narrow device dropdown to selected group (UX). Keep selected device visible if mismatched.
+        d2 = [d for d in (device_list or []) if d in group_ips] if group_ips else []
+        if device_filter and device_filter not in d2:
+            d2.append(device_filter)
+        device_list = d2
     result_list = _build_auth_result_list(
         events_for_lists=events_for_lists,
         start_dt=start_dt,
@@ -612,6 +709,9 @@ def auth():
         total_fail=total_fail,
         unique_user_count=unique_user_count,
         unique_device_count=unique_device_count,
+        # device group filter
+        group_list=group_list,
+        group_filter=group_filter,
         # auth filters
         user_list=user_list,
         device_list=device_list,
@@ -635,6 +735,10 @@ def command():
     # Filters (preserve auth filters so the user doesn't lose state)
     user_filter, device_filter, result_filter = _get_auth_filters()
     cmd_user_filter, cmd_device_filter, cmd_contains_filter = _get_cmd_filters()
+    group_filter = _get_group_filter()
+    group_list, group_to_ips = _get_device_groups_and_ips()
+    group_ips = set(group_to_ips.get(group_filter, [])) if group_filter else set()
+
     date_from, date_to, start_dt, end_dt = _get_date_filters()
 
     noise_users, default_hide_noise = _get_noise_users()
@@ -644,7 +748,7 @@ def command():
     # Command audit logs:
     # - default = recent (fast)
     # - if any cmd filter OR date filter provided -> scan historical (or use SQLite index)
-    scan_all_cmd = bool(cmd_user_filter or cmd_device_filter or cmd_contains_filter or (start_dt and end_dt))
+    scan_all_cmd = bool(cmd_user_filter or cmd_device_filter or cmd_contains_filter or group_filter or (start_dt and end_dt))
     if scan_all_cmd:
         command_events = get_command_events(
             limit=6000,
@@ -662,8 +766,17 @@ def command():
     if hide_noise:
         command_events = _filter_out_noise(command_events, noise_users)
 
+    # Optional: filter by Device Group
+    if group_filter:
+        command_events = _filter_events_by_group(command_events, group_ips)
+
     # Dropdown lists (from policy.json so options never get 'pushed out')
     cmd_user_list, cmd_device_list = _get_filter_choices_from_policy()
+    if group_filter:
+        d2 = [d for d in (cmd_device_list or []) if d in group_ips] if group_ips else []
+        if cmd_device_filter and cmd_device_filter not in d2:
+            d2.append(cmd_device_filter)
+        cmd_device_list = d2
 
     # Summary
     total_cmd = len(command_events)
@@ -694,6 +807,9 @@ def command():
         cmd_user_breakdown=cmd_user_breakdown,
         cmd_user_activity=cmd_user_activity,
         scan_all_cmd=scan_all_cmd,
+        # device group filter
+        group_list=group_list,
+        group_filter=group_filter,
         # command filters
         cmd_user_list=cmd_user_list,
         cmd_device_list=cmd_device_list,
