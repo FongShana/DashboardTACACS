@@ -280,6 +280,30 @@
     if (df) df.value = isoFrom || "";
     if (dt) dt.value = isoTo || "";
   });
+
+  // Auto-refresh dependent dropdowns when Device Group changes
+  var groupSel = form.querySelector('select[name="group"]');
+  if (groupSel) {
+    groupSel.addEventListener("change", function () {
+      // Sync date UI -> ISO hidden fields before submitting
+      var dfUi = form.querySelector('input[name="date_from_ui"]');
+      var dtUi = form.querySelector('input[name="date_to_ui"]');
+      var df = form.querySelector('input[name="date_from"]');
+      var dt = form.querySelector('input[name="date_to"]');
+
+      var isoFrom = dmyToIso(dfUi ? dfUi.value : "");
+      var isoTo = dmyToIso(dtUi ? dtUi.value : "");
+      if (isoFrom === null || isoTo === null) {
+        alert("รูปแบบวันที่ต้องเป็น dd/mm/yy หรือ dd/mm/yyyy");
+        return;
+      }
+      if (df) df.value = isoFrom || "";
+      if (dt) dt.value = isoTo || "";
+
+      if (typeof form.requestSubmit === "function") form.requestSubmit();
+      else form.submit();
+    });
+  }
 })();
 </script>
 

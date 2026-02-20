@@ -364,6 +364,88 @@ def _filter_events_by_group(events: list[dict], group_ips: set[str]) -> list[dic
     return out
 
 
+_USER_GROUP_CACHE: dict[str, dict] = {}
+
+
+def _narrow_user_list_to_group(
+    user_list: list[str],
+    *,
+    group_id: str,
+    group_ips: set[str],
+    selected_user: str,
+) -> list[str]:
+    """Narrow policy-based user dropdown list to the selected device group.
+
+    Strategy (stable + fast):
+      - Start from policy-based user_list (already scope-restricted for admin accounts)
+      - Keep users that are:
+          * global (no device_group_ids) OR
+          * explicitly include group_id OR
+          * have target_olt_ips intersecting devices in the group
+
+    This keeps dropdown options stable (not dependent on recent log samples).
+    """
+    gid = (group_id or "").strip().lower()
+    if not gid:
+        return user_list
+
+    # If group filter is active but group has no devices -> no meaningful users.
+    if not group_ips:
+        out: list[str] = []
+        sel = (selected_user or "").strip()
+        if sel:
+            out.append(sel)
+        return out
+
+    # Cache by policy mtime + group_id (micro TTL to avoid refresh storms)
+    pol_mtime = 0.0
+    try:
+        if policy_store.POLICY_PATH.exists():
+            pol_mtime = policy_store.POLICY_PATH.stat().st_mtime
+    except Exception:
+        pol_mtime = 0.0
+
+    ck = f"{pol_mtime:.3f}|{gid}"
+    cached = _USER_GROUP_CACHE.get(ck)
+    if cached and (time.time() - float(cached.get("ts") or 0.0)) < 2.0:
+        eligible = set(cached.get("eligible") or [])
+    else:
+        policy = policy_store.load_policy() or {}
+        users = policy.get("users") or []
+        eligible: set[str] = set()
+        for u in users:
+            if not isinstance(u, dict):
+                continue
+            uname = (u.get("username") or "").strip()
+            if not uname:
+                continue
+
+            gids = [str(x).strip().lower() for x in (u.get("device_group_ids") or []) if str(x).strip()]
+            # global users (no device_group_ids)
+            if len(gids) == 0:
+                eligible.add(uname)
+                continue
+            if gid in set(gids):
+                eligible.add(uname)
+                continue
+
+            # Target OLT scope can still make a user relevant to this group
+            t_ips = {str(x).strip() for x in (u.get("target_olt_ips") or []) if str(x).strip()}
+            if t_ips and (t_ips & group_ips):
+                eligible.add(uname)
+
+        _USER_GROUP_CACHE[ck] = {"ts": time.time(), "eligible": sorted(eligible)}
+
+    # Preserve existing ordering (already sorted) from policy-based list
+    out = [u for u in (user_list or []) if u in eligible]
+
+    # Keep selected value visible even if it doesn't match current group (backward compatibility)
+    sel = (selected_user or "").strip()
+    if sel and sel not in out:
+        out.append(sel)
+    return out
+
+
 # -----------------------------
 # Result dropdown choices
 # -----------------------------
@@ -670,6 +752,13 @@ def auth():
     # Dropdown lists (from policy.json so options never get 'pushed out')
     user_list, device_list = _get_filter_choices_from_policy()
     if group_filter:
+        # Narrow user/device dropdowns to the selected group (UX)
+        user_list = _narrow_user_list_to_group(
+            user_list,
+            group_id=group_filter,
+            group_ips=group_ips,
+            selected_user=user_filter,
+        )
         # Narrow device dropdown to selected group (UX). Keep selected device visible if mismatched.
         d2 = [d for d in (device_list or []) if d in group_ips] if group_ips else []
         if device_filter and device_filter not in d2:
@@ -773,6 +862,12 @@ def command():
     # Dropdown lists (from policy.json so options never get 'pushed out')
     cmd_user_list, cmd_device_list = _get_filter_choices_from_policy()
     if group_filter:
+        cmd_user_list = _narrow_user_list_to_group(
+            cmd_user_list,
+            group_id=group_filter,
+            group_ips=group_ips,
+            selected_user=cmd_user_filter,
+        )
         d2 = [d for d in (cmd_device_list or []) if d in group_ips] if group_ips else []
         if cmd_device_filter and cmd_device_filter not in d2:
             d2.append(cmd_device_filter)
