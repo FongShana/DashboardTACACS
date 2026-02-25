@@ -208,6 +208,88 @@ def _retention_cleanup(conn: sqlite3.Connection) -> None:
         return
 
 
+def _missing_file_cleanup(conn: sqlite3.Connection) -> dict:
+    """Remove rows for log files that no longer exist on disk.
+
+    Why:
+      - The SQLite DB is a cache for fast browsing.
+      - Raw log files in /var/log/tac_plus may be rotated/removed.
+      - Without cleanup, the UI can show historical rows for files that no
+        longer exist, which can confuse operators.
+
+    Safety:
+      - Only considers file paths that resolve under LOG_DIR.
+      - Runs only in "full" (indexer) mode so it won't add latency to web requests.
+
+    Returns:
+      {"files": <int>, "rows": <int>}
+    """
+
+    try:
+        base = LOG_DIR.resolve()
+    except Exception:
+        return {"files": 0, "rows": 0}
+
+    candidates: set[str] = set()
+
+    # ingest_state is authoritative for what we have indexed per file.
+    try:
+        for (f,) in conn.execute("SELECT DISTINCT file FROM ingest_state").fetchall():
+            if f:
+                candidates.add(str(f))
+    except Exception:
+        pass
+
+    # Also consider any file values that may exist in events (extra safety).
+    try:
+        for (f,) in conn.execute(
+            "SELECT DISTINCT file FROM events WHERE file IS NOT NULL AND file != ''"
+        ).fetchall():
+            if f:
+                candidates.add(str(f))
+    except Exception:
+        pass
+
+    missing: list[str] = []
+    for fstr in sorted(candidates):
+        try:
+            p = Path(fstr)
+            if not p.is_absolute():
+                p = LOG_DIR / p
+
+            # Resolve without requiring the target to exist.
+            try:
+                rp = p.resolve(strict=False)
+            except TypeError:
+                # Older Python compatibility (shouldn't happen on Ubuntu 22.04).
+                rp = p.resolve()
+
+            # Only delete rows for files under LOG_DIR.
+            if not (str(rp).startswith(str(base) + os.sep) or str(rp) == str(base)):
+                continue
+
+            if not rp.exists():
+                missing.append(fstr)
+        except Exception:
+            continue
+
+    removed_files = 0
+    removed_rows = 0
+    for fstr in missing:
+        try:
+            c = conn.execute("SELECT COUNT(*) FROM events WHERE file = ?", (fstr,)).fetchone()
+            if c and c[0]:
+                removed_rows += int(c[0])
+
+            conn.execute("DELETE FROM events WHERE file = ?", (fstr,))
+            conn.execute("DELETE FROM ingest_state WHERE file = ?", (fstr,))
+            removed_files += 1
+        except Exception:
+            continue
+
+    return {"files": int(removed_files), "rows": int(removed_rows)}
+
+
 def ingest_once(
     *,
     parse_authc: Callable[[str], Optional[dict]],
@@ -240,6 +322,7 @@ def ingest_once(
 
     ingested_rows = 0
     file_count = 0
+    cleanup_stats = {"files": 0, "rows": 0}
 
     conn = _connect()
     try:
@@ -253,6 +336,10 @@ def ingest_once(
                 ingested_rows += _ingest_one_file(conn, p, source=source, parse_fn=parse_fn)
 
         _retention_cleanup(conn)
+
+        # In full/indexer mode, keep DB consistent with the current on-disk logs.
+        if full:
+            cleanup_stats = _missing_file_cleanup(conn)
         conn.execute("COMMIT")
     except Exception:
         try:
@@ -266,7 +353,10 @@ def ingest_once(
         except Exception:
             pass
 
-    return {"enabled": True, "ingested": int(ingested_rows), "files": int(file_count), "full": bool(full)}
+    out = {"enabled": True, "ingested": int(ingested_rows), "files": int(file_count), "full": bool(full)}
+    if full:
+        out["cleanup_missing_files"] = cleanup_stats
+    return out
 
 
 def _ingest_one_file(
