@@ -47,6 +47,7 @@
     <input type="hidden" name="cmd_user" value="{{ cmd_user_filter }}">
     <input type="hidden" name="cmd_device" value="{{ cmd_device_filter }}">
     <input type="hidden" name="cmd_contains" value="{{ cmd_contains_filter }}">
+        <input type="hidden" name="cmd_page" value="{{ cmd_page }}">
 
     <!-- keep toggle stable even when checkbox unchecked -->
     <input type="hidden" name="hide_noise" value="0">
@@ -205,6 +206,42 @@
     </table>
   </div>
 </section>
+
+
+{% if auth_total_pages > 1 %}
+  <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top: 12px;">
+    <div class="muted" style="font-size: 13px;">
+      Showing {{ auth_page_start }}-{{ auth_page_end }} of {{ total_events }}
+    </div>
+    <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+      {% set sep = '&' if '?' in auth_page_url_base else '?' %}
+      {% if auth_has_prev %}
+        <a class="btn btn-secondary" style="padding:6px 10px; font-size: 13px;" href="{{ auth_page_url_base ~ sep ~ 'auth_page=' ~ auth_prev_page }}">Prev</a>
+      {% else %}
+        <span class="btn btn-secondary" style="padding:6px 10px; font-size: 13px; opacity:.5; pointer-events:none;">Prev</span>
+      {% endif %}
+
+      {% for p in auth_page_items %}
+        {% if p %}
+          {% if p == auth_page %}
+            <span class="btn btn-primary" style="padding:6px 10px; font-size: 13px; pointer-events:none;">{{ p }}</span>
+          {% else %}
+            <a class="btn btn-secondary" style="padding:6px 10px; font-size: 13px;" href="{{ auth_page_url_base ~ sep ~ 'auth_page=' ~ p }}">{{ p }}</a>
+          {% endif %}
+        {% else %}
+          <span class="muted" style="padding:0 6px;">…</span>
+        {% endif %}
+      {% endfor %}
+
+      {% if auth_has_next %}
+        <a class="btn btn-secondary" style="padding:6px 10px; font-size: 13px;" href="{{ auth_page_url_base ~ sep ~ 'auth_page=' ~ auth_next_page }}">Next</a>
+      {% else %}
+        <span class="btn btn-secondary" style="padding:6px 10px; font-size: 13px; opacity:.5; pointer-events:none;">Next</span>
+      {% endif %}
+    </div>
+  </div>
+{% endif %}
+
 
 <script>
 (function () {
