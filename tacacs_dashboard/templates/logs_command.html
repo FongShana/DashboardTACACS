@@ -370,18 +370,7 @@
     _choicesAbort = (window.AbortController ? new AbortController() : null);
 
     var baseUrl = "{{ url_for('logs.filter_choices_api') }}";
-    var sep = (baseUrl.indexOf("?") >= 0 ? "&" : "?");
-    var fullUrl = baseUrl + sep + "group=" + encodeURIComponent(gid) + "&tab=command";
-
-    // Optional date scope (YYYY-MM-DD hidden inputs)
-    var df = form.querySelector('input[name="date_from"]');
-    var dt = form.querySelector('input[name="date_to"]');
-    if (df && df.value) fullUrl += "&date_from=" + encodeURIComponent(df.value);
-    if (dt && dt.value) fullUrl += "&date_to=" + encodeURIComponent(dt.value);
-
-    // Keep hide_noise behavior consistent with the current page
-    var hn = form.querySelector('input[type="checkbox"][name="hide_noise"][value="1"]');
-    fullUrl += "&hide_noise=" + encodeURIComponent((hn && hn.checked) ? "1" : "0");
+    var fullUrl = baseUrl + (baseUrl.indexOf("?") >= 0 ? "&" : "?") + "group=" + encodeURIComponent(gid);
 
     var prevUser = userSel ? userSel.value : "";
     var prevDev = devSel ? devSel.value : "";

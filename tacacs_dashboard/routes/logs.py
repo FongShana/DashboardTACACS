@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import sqlite3
 import time
-import hashlib
 from collections import Counter
 from datetime import date, datetime, time as dtime, timedelta, timezone
 from pathlib import Path
@@ -1045,160 +1044,6 @@ def _get_filter_choices_from_policy():
     return user_list, device_list
 
 
-
-
-# -----------------------------
-# User/Device dropdown choices from Log DB (SQLite events)
-# -----------------------------
-_LOG_CHOICES_CACHE: dict[str, dict] = {}
-
-def _ip_sort_key(ip: str):
-    s = (ip or "").strip()
-    parts = s.split(".")
-    if len(parts) == 4 and all(p.isdigit() for p in parts):
-        try:
-            return (0, int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3]))
-        except Exception:
-            pass
-    return (1, s)
-
-def _hash_ips(ips: set[str] | None) -> str:
-    if ips is None:
-        return "ALL"
-    items = sorted({(x or "").strip() for x in ips if (x or "").strip()})
-    if not items:
-        return "EMPTY"
-    h = hashlib.sha1(("|".join(items)).encode("utf-8")).hexdigest()[:12]
-    return f"{len(items)}:{h}"
-
-def _get_filter_choices_from_logsdb(
-    *,
-    tab: str,
-    start_dt: datetime | None,
-    end_dt: datetime | None,
-    restrict_ips: set[str] | None,
-    hide_noise: bool,
-    noise_users: set[str],
-    selected_user: str,
-    selected_device: str,
-) -> tuple[list[str], list[str]]:
-    """Return (user_list, device_list) from SQLite `events`.
-
-    Security:
-      - For admin accounts, caller should pass `restrict_ips` as the allowed device IP set,
-        so dropdowns do not leak users/devices from other groups.
-
-    Behavior:
-      - If `tab == 'command'`, only consider rows with non-empty `command`.
-      - Otherwise (auth), only consider sources authc/authz/acct.
-      - If a date range is provided, only consider rows within the range.
-      - If hide_noise is enabled, omit noise users from the user dropdown.
-    """
-    if not _sqlite_available():
-        # Fallback handled by caller
-        return [], []
-
-    tab = (tab or "auth").strip().lower()
-    if tab not in ("auth", "command"):
-        tab = "auth"
-
-    try:
-        dbp = log_sqlite.db_path()
-        if not dbp.exists():
-            return [], []
-        mtime = 0.0
-        try:
-            mtime = dbp.stat().st_mtime
-        except Exception:
-            mtime = 0.0
-
-        start_ts = float(start_dt.timestamp()) if start_dt else 0.0
-        end_ts = float(end_dt.timestamp()) if end_dt else 0.0
-        scope_key = _hash_ips(restrict_ips)
-        ck = f"{mtime:.3f}|{tab}|{start_ts:.0f}|{end_ts:.0f}|{scope_key}|{1 if hide_noise else 0}"
-
-        cached = _LOG_CHOICES_CACHE.get(ck)
-        if cached and (time.time() - float(cached.get("ts") or 0.0)) < 3.0:
-            base_users = list(cached.get("users") or [])
-            base_devices = list(cached.get("devices") or [])
-        else:
-            where = []
-            params: list[object] = []
-
-            if tab == "command":
-                where.append("(command IS NOT NULL AND command != '')")
-            else:
-                where.append("source IN ('authc','authz','acct')")
-
-            if start_dt and end_dt:
-                where.append("ts >= ? AND ts < ?")
-                params.extend([start_ts, end_ts])
-
-            # Enforce device scope (admin) and/or selected group
-            if restrict_ips is not None:
-                ips = sorted({(x or "").strip() for x in restrict_ips if (x or "").strip()})
-                if not ips:
-                    # Scope exists but has no devices -> no choices
-                    base_users, base_devices = [], []
-                    _LOG_CHOICES_CACHE[ck] = {"ts": time.time(), "users": base_users, "devices": base_devices}
-                    # add selected values later
-                else:
-                    ph = ",".join(["?"] * len(ips))
-                    where.append(f"device IN ({ph})")
-                    params.extend(ips)
-
-            where_sql = " AND ".join(where) if where else "1=1"
-
-            conn = _sqlite_connect_ro()
-            try:
-                dev_rows = conn.execute(
-                    f"""SELECT DISTINCT device FROM events
-                          WHERE {where_sql} AND device IS NOT NULL AND TRIM(device) != ''""",
-                    tuple(params),
-                ).fetchall()
-                base_devices = sorted({(r[0] or "").strip() for r in dev_rows if (r and (r[0] or "").strip())}, key=_ip_sort_key)
-
-                # Users: apply optional noise filter
-                where_u = [where_sql, "user IS NOT NULL", "TRIM(user) != ''"]
-                params_u: list[object] = list(params)
-
-                if hide_noise and noise_users:
-                    nu = sorted({(x or "").strip().lower() for x in noise_users if (x or "").strip()})
-                    if nu:
-                        ph2 = ",".join(["?"] * len(nu))
-                        where_u.append(f"COALESCE(LOWER(user),'') NOT IN ({ph2})")
-                        params_u.extend(nu)
-
-                where_u_sql = " AND ".join(where_u)
-                user_rows = conn.execute(
-                    f"""SELECT DISTINCT user FROM events
-                          WHERE {where_u_sql}""",
-                    tuple(params_u),
-                ).fetchall()
-                base_users = sorted({(r[0] or "").strip() for r in user_rows if (r and (r[0] or "").strip())}, key=lambda s: s.lower())
-            finally:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-
-            _LOG_CHOICES_CACHE[ck] = {"ts": time.time(), "users": base_users, "devices": base_devices}
-
-        # Ensure current selections remain visible
-        out_users = list(base_users)
-        out_devices = list(base_devices)
-
-        sel_u = (selected_user or "").strip()
-        if sel_u and sel_u not in out_users:
-            out_users.append(sel_u)
-
-        sel_d = (selected_device or "").strip()
-        if sel_d and sel_d not in out_devices:
-            out_devices.append(sel_d)
-
-        return out_users, out_devices
-    except Exception:
-        return [], []
 def _filter_out_noise(events: list[dict], noise_users: set[str]) -> list[dict]:
     if not events or not noise_users:
         return events
@@ -1247,58 +1092,20 @@ def auth():
     hn_vals = request.args.getlist("hide_noise")
     hide_noise = _parse_bool(hn_vals[-1] if hn_vals else None, default=default_hide_noise)
 
-    # Dropdown lists (from Log DB if available; scope-restricted for admin accounts)
-    allowed = _allowed_group_ids_from_session()
-    is_admin = allowed is not None
-
-    scope_ips: set[str] = set()
-    if is_admin:
-        for ips in (group_to_ips or {}).values():
-            for ip in (ips or []):
-                if ip:
-                    scope_ips.add(str(ip).strip())
-
+    # Dropdown lists (from policy.json so options never get 'pushed out')
+    user_list, device_list = _get_filter_choices_from_policy()
     if group_filter:
-        restrict_ips = set(group_ips)
-    elif is_admin:
-        restrict_ips = set(scope_ips)
-    else:
-        restrict_ips = None  # superadmin (no group filter) -> no restriction
-
-    if _sqlite_available():
-        user_list, device_list = _get_filter_choices_from_logsdb(
-            tab="auth",
-            start_dt=start_dt,
-            end_dt=end_dt,
-            restrict_ips=restrict_ips,
-            hide_noise=hide_noise,
-            noise_users=noise_users,
+        # Narrow user/device dropdowns to the selected group (UX)
+        user_list = _narrow_user_list_to_group(
+            user_list,
+            group_id=group_filter,
+            group_ips=group_ips,
             selected_user=user_filter,
-            selected_device=device_filter,
         )
-    else:
-        # Fallback: stable policy-based lists
-        user_list, device_list = _get_filter_choices_from_policy()
-        if group_filter:
-            user_list = _narrow_user_list_to_group(
-                user_list,
-                group_id=group_filter,
-                group_ips=group_ips,
-                selected_user=user_filter,
-            )
-            d2 = [d for d in (device_list or []) if d in group_ips] if group_ips else []
-            if device_filter and device_filter not in d2:
-                d2.append(device_filter)
-            device_list = d2
-
-
-
-    # Effective device scope for queries (admin scope applies even when no group is selected)
-    q_group_filter = group_filter
-    q_group_ips = set(group_ips)
-    if not q_group_filter and is_admin:
-        q_group_filter = "__scope__"
-        q_group_ips = set(scope_ips)
+        d2 = [d for d in (device_list or []) if d in group_ips] if group_ips else []
+        if device_filter and device_filter not in d2:
+            d2.append(device_filter)
+        device_list = d2
 
     # Base args for pagination links
     _base_args = {
@@ -1343,8 +1150,8 @@ def auth():
             user=user_filter,
             device=device_filter,
             result=result_filter,
-            group_ips=q_group_ips,
-            group_filter=q_group_filter,
+            group_ips=group_ips,
+            group_filter=group_filter,
             hide_noise=hide_noise,
             noise_users=noise_users,
         )
@@ -1426,9 +1233,9 @@ def auth():
             filtered_events = _filter_out_noise(filtered_events, noise_users)
             events_for_lists = _filter_out_noise(events_for_lists, noise_users)
 
-        if q_group_filter:
-            filtered_events = _filter_events_by_group(filtered_events, q_group_ips)
-            events_for_lists = _filter_events_by_group(events_for_lists, q_group_ips)
+        if group_filter:
+            filtered_events = _filter_events_by_group(filtered_events, group_ips)
+            events_for_lists = _filter_events_by_group(events_for_lists, group_ips)
 
         total_events = len(filtered_events)
         total_success = sum(
@@ -1537,58 +1344,19 @@ def command():
         cmd_user_filter or cmd_device_filter or cmd_contains_filter or group_filter or (start_dt and end_dt)
     )
 
-    # Dropdown lists (from Log DB if available; scope-restricted for admin accounts)
-    allowed = _allowed_group_ids_from_session()
-    is_admin = allowed is not None
-
-    scope_ips: set[str] = set()
-    if is_admin:
-        for ips in (group_to_ips or {}).values():
-            for ip in (ips or []):
-                if ip:
-                    scope_ips.add(str(ip).strip())
-
+    # Dropdown lists (from policy.json so options never get 'pushed out')
+    cmd_user_list, cmd_device_list = _get_filter_choices_from_policy()
     if group_filter:
-        restrict_ips = set(group_ips)
-    elif is_admin:
-        restrict_ips = set(scope_ips)
-    else:
-        restrict_ips = None  # superadmin (no group filter) -> no restriction
-
-    if _sqlite_available():
-        cmd_user_list, cmd_device_list = _get_filter_choices_from_logsdb(
-            tab="command",
-            start_dt=start_dt,
-            end_dt=end_dt,
-            restrict_ips=restrict_ips,
-            hide_noise=hide_noise,
-            noise_users=noise_users,
+        cmd_user_list = _narrow_user_list_to_group(
+            cmd_user_list,
+            group_id=group_filter,
+            group_ips=group_ips,
             selected_user=cmd_user_filter,
-            selected_device=cmd_device_filter,
         )
-    else:
-        # Fallback: stable policy-based lists
-        cmd_user_list, cmd_device_list = _get_filter_choices_from_policy()
-        if group_filter:
-            cmd_user_list = _narrow_user_list_to_group(
-                cmd_user_list,
-                group_id=group_filter,
-                group_ips=group_ips,
-                selected_user=cmd_user_filter,
-            )
-            d2 = [d for d in (cmd_device_list or []) if d in group_ips] if group_ips else []
-            if cmd_device_filter and cmd_device_filter not in d2:
-                d2.append(cmd_device_filter)
-            cmd_device_list = d2
-
-
-
-    # Effective device scope for queries (admin scope applies even when no group is selected)
-    q_group_filter = group_filter
-    q_group_ips = set(group_ips)
-    if not q_group_filter and is_admin:
-        q_group_filter = "__scope__"
-        q_group_ips = set(scope_ips)
+        d2 = [d for d in (cmd_device_list or []) if d in group_ips] if group_ips else []
+        if cmd_device_filter and cmd_device_filter not in d2:
+            d2.append(cmd_device_filter)
+        cmd_device_list = d2
 
     # Base args for pagination links
     _base_args = {
@@ -1632,8 +1400,8 @@ def command():
             cmd_user=cmd_user_filter,
             cmd_device=cmd_device_filter,
             cmd_contains=cmd_contains_filter,
-            group_ips=q_group_ips,
-            group_filter=q_group_filter,
+            group_ips=group_ips,
+            group_filter=group_filter,
             hide_noise=hide_noise,
             noise_users=noise_users,
         )
@@ -1673,8 +1441,8 @@ def command():
         if hide_noise:
             all_events = _filter_out_noise(all_events, noise_users)
 
-        if q_group_filter:
-            all_events = _filter_events_by_group(all_events, q_group_ips)
+        if group_filter:
+            all_events = _filter_events_by_group(all_events, group_ips)
 
         total_cmd = len(all_events)
         cmd_unique_user_count = len({e.get("user") for e in all_events if e.get("user")})
@@ -1756,70 +1524,28 @@ def command():
 def filter_choices_api():
     """AJAX helper: return dropdown choices for User/Device based on Device Group.
 
-    Behavior:
-      - Uses SQLite Log DB (events) when available so options reflect values seen in logs.
-      - Enforces admin device-group scope so User/Device lists don't leak other groups.
-      - Optional parameters:
-          * tab=auth|command  (default: auth)
-          * date_from/date_to (YYYY-MM-DD) to scope choices to the selected date range
-          * hide_noise=1|0    to optionally hide noisy/system accounts from the user list
+    - Uses policy.json (stable) and admin scope restriction.
+    - Does NOT depend on recent logs, so options won't disappear.
     """
     group_id = (request.args.get("group") or "").strip().lower()
-    tab = (request.args.get("tab") or "auth").strip().lower()
-    if tab not in ("auth", "command"):
-        tab = "auth"
 
-    # Optional date scope
-    _date_from, _date_to, start_dt, end_dt = _get_date_filters()
+    # base choices (scope-restricted)
+    user_list, device_list = _get_filter_choices_from_policy()
 
-    noise_users, default_hide_noise = _get_noise_users()
-    hn_vals = request.args.getlist("hide_noise")
-    hide_noise = _parse_bool(hn_vals[-1] if hn_vals else None, default=default_hide_noise)
-
-    # group -> ips mapping (already scope-restricted for admin)
+    # group -> ips mapping (scope-restricted)
     _groups, group_to_ips = _get_device_groups_and_ips()
     group_ips = set(group_to_ips.get(group_id, [])) if group_id else set()
 
-    # Build the allowed scope device set for admin accounts (union of allowed groups)
-    allowed = _allowed_group_ids_from_session()
-    is_admin = allowed is not None
-    scope_ips: set[str] = set()
-    if is_admin:
-        for ips in (group_to_ips or {}).values():
-            for ip in (ips or []):
-                if ip:
-                    scope_ips.add(str(ip).strip())
-
     if group_id:
-        restrict_ips = set(group_ips)
-    elif is_admin:
-        restrict_ips = set(scope_ips)
-    else:
-        restrict_ips = None
-
-    if _sqlite_available():
-        user_list, device_list = _get_filter_choices_from_logsdb(
-            tab=tab,
-            start_dt=start_dt,
-            end_dt=end_dt,
-            restrict_ips=restrict_ips,
-            hide_noise=hide_noise,
-            noise_users=noise_users,
-            selected_user="",
-            selected_device="",
+        # Narrow devices to only the selected group
+        device_list = sorted(group_ips)
+        # Narrow users to those relevant to this group (global / in-group / target-OLT intersects)
+        user_list = _narrow_user_list_to_group(
+            user_list,
+            group_id=group_id,
+            group_ips=group_ips,
+            selected_user="",  # for AJAX we reset if no longer valid
         )
-    else:
-        # Fallback: stable policy-based lists
-        user_list, device_list = _get_filter_choices_from_policy()
-        if group_id:
-            device_list = sorted(group_ips)
-            user_list = _narrow_user_list_to_group(
-                user_list,
-                group_id=group_id,
-                group_ips=group_ips,
-                selected_user="",
-            )
 
     return jsonify({"users": user_list, "devices": device_list})
-
 
