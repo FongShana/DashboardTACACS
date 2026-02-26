@@ -335,7 +335,21 @@
     _choicesAbort = (window.AbortController ? new AbortController() : null);
 
     var baseUrl = "{{ url_for('logs.filter_choices_api') }}";
-    var fullUrl = baseUrl + (baseUrl.indexOf("?") >= 0 ? "&" : "?") + "group=" + encodeURIComponent(gid);
+    var dfEl = form.querySelector('input[name="date_from"]');
+    var dtEl = form.querySelector('input[name="date_to"]');
+    var hnEl = form.querySelector('input[type="checkbox"][name="hide_noise"]');
+
+    var df = dfEl ? (dfEl.value || '').trim() : '';
+    var dt = dtEl ? (dtEl.value || '').trim() : '';
+    var hn = (hnEl && hnEl.checked) ? '1' : '0';
+
+    var qs = 'group=' + encodeURIComponent(gid)
+      + '&tab=auth'
+      + '&date_from=' + encodeURIComponent(df)
+      + '&date_to=' + encodeURIComponent(dt)
+      + '&hide_noise=' + encodeURIComponent(hn);
+
+    var fullUrl = baseUrl + (baseUrl.indexOf('?') >= 0 ? '&' : '?') + qs;
 
     var prevUser = userSel ? userSel.value : "";
     var prevDev = devSel ? devSel.value : "";

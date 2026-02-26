@@ -658,6 +658,122 @@ def _sqlite_command_page(
     user_activity = [{"user": str(u3 or "").strip(), "count": int(c or 0)} for (u3, c) in act_rows if (u3 or "").strip()]
     return events, stats, top_users, user_activity
 
+
+# -----------------------------
+# Hybrid dropdown support: policy + seen-in-logs (SQLite)
+# -----------------------------
+
+def _merge_unique(base: list[str], extra: list[str]) -> list[str]:
+    """Return base + extra (preserving order), de-duplicated."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for v in (base or []):
+        s = (v or '').strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    for v in (extra or []):
+        s = (v or '').strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return out
+
+
+def _sqlite_seen_choices(
+    *,
+    tab: str,
+    start_dt: datetime | None,
+    end_dt: datetime | None,
+    scope_ips: set[str] | None,
+    noise_users: set[str],
+    limit_users: int = 250,
+    limit_devices: int = 250,
+) -> tuple[list[str], list[str]]:
+    """Return (seen_users, seen_devices) from SQLite, restricted by scope.
+
+    tab:
+      - 'auth'    -> sources authc/authz/acct
+      - 'command' -> command != ''
+
+    If scope_ips is provided:
+      - empty set  -> returns empty
+      - non-empty  -> restrict device IN scope_ips
+
+    Note: noisy/system accounts are always excluded from dropdown suggestions.
+    """
+    if not _sqlite_available():
+        return [], []
+
+    tab = (tab or 'auth').strip().lower()
+
+    if scope_ips is not None and not scope_ips:
+        return [], []
+
+    start_ts = float(start_dt.timestamp()) if start_dt else None
+    end_ts = float(end_dt.timestamp()) if end_dt else None
+
+    where: list[str] = []
+    params: list[object] = []
+
+    if tab == 'command':
+        where.append("(command IS NOT NULL AND command != '')")
+    else:
+        where.append("source IN ('authc','authz','acct')")
+
+    if start_ts is not None and end_ts is not None:
+        where.append('ts >= ? AND ts < ?')
+        params.extend([start_ts, end_ts])
+
+    if scope_ips is not None:
+        ips = sorted({(x or '').strip() for x in scope_ips if (x or '').strip()})
+        if ips:
+            ph = ','.join(['?'] * len(ips))
+            where.append(f"device IN ({ph})")
+            params.extend(ips)
+
+    nu = sorted({(x or '').strip().lower() for x in (noise_users or set()) if (x or '').strip()})
+    if nu:
+        ph = ','.join(['?'] * len(nu))
+        where.append(f"COALESCE(LOWER(user),'') NOT IN ({ph})")
+        params.extend(nu)
+
+    where_sql = ' AND '.join(where) if where else '1=1'
+
+    sql_users = f"""
+        SELECT TRIM(user) AS u, MAX(ts) AS last_ts
+        FROM events
+        WHERE {where_sql} AND TRIM(COALESCE(user,'')) != ''
+        GROUP BY TRIM(user)
+        ORDER BY last_ts DESC
+        LIMIT ?
+    """
+
+    sql_devices = f"""
+        SELECT TRIM(device) AS d, MAX(ts) AS last_ts
+        FROM events
+        WHERE {where_sql} AND TRIM(COALESCE(device,'')) != ''
+        GROUP BY TRIM(device)
+        ORDER BY last_ts DESC
+        LIMIT ?
+    """
+
+    conn = _sqlite_connect_ro()
+    try:
+        users_rows = conn.execute(sql_users, tuple(params + [int(limit_users)])).fetchall()
+        dev_rows = conn.execute(sql_devices, tuple(params + [int(limit_devices)])).fetchall()
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    seen_users = [(r[0] or '').strip() for r in (users_rows or []) if (r and (r[0] or '').strip())]
+    seen_devices = [(r[0] or '').strip() for r in (dev_rows or []) if (r and (r[0] or '').strip())]
+    return seen_users, seen_devices
+
 def _parse_ymd(s: str) -> date | None:
     s = (s or "").strip()
     if not s:
@@ -1129,10 +1245,11 @@ def auth():
     hn_vals = request.args.getlist("hide_noise")
     hide_noise = _parse_bool(hn_vals[-1] if hn_vals else None, default=default_hide_noise)
 
-    # Dropdown lists (from policy.json so options never get 'pushed out')
+    # Dropdown lists (hybrid: policy + seen-in-logs)
     user_list, device_list = _get_filter_choices_from_policy()
+
+    # First, apply the existing UX narrowing by selected group (policy-driven)
     if group_filter:
-        # Narrow user/device dropdowns to the selected group (UX)
         user_list = _narrow_user_list_to_group(
             user_list,
             group_id=group_filter,
@@ -1143,6 +1260,31 @@ def auth():
         if device_filter and device_filter not in d2:
             d2.append(device_filter)
         device_list = d2
+
+    # Then, append "seen in logs" values (SQLite) to help find users/devices
+    # that exist in logs but may not be present in policy (e.g., deleted users).
+    # Respect admin scope even when no group is selected.
+    seen_scope_ips = None
+    if group_filter:
+        seen_scope_ips = set(group_ips)
+    elif scope_ips is not None:
+        seen_scope_ips = set(scope_ips)
+
+    seen_users, seen_devices = _sqlite_seen_choices(
+        tab='auth',
+        start_dt=start_dt,
+        end_dt=end_dt,
+        scope_ips=seen_scope_ips,
+        noise_users=noise_users,
+    )
+    user_list = _merge_unique(user_list, seen_users)
+    device_list = _merge_unique(device_list, seen_devices)
+
+    # Ensure current selections remain visible even if not in the lists
+    if user_filter and user_filter not in user_list:
+        user_list.append(user_filter)
+    if device_filter and device_filter not in device_list:
+        device_list.append(device_filter)
 
     # Base args for pagination links
     _base_args = {
@@ -1394,8 +1536,10 @@ def command():
         cmd_user_filter or cmd_device_filter or cmd_contains_filter or group_filter or (start_dt and end_dt)
     )
 
-    # Dropdown lists (from policy.json so options never get 'pushed out')
+    # Dropdown lists (hybrid: policy + seen-in-logs)
     cmd_user_list, cmd_device_list = _get_filter_choices_from_policy()
+
+    # Policy-driven narrowing by selected group (UX)
     if group_filter:
         cmd_user_list = _narrow_user_list_to_group(
             cmd_user_list,
@@ -1407,6 +1551,30 @@ def command():
         if cmd_device_filter and cmd_device_filter not in d2:
             d2.append(cmd_device_filter)
         cmd_device_list = d2
+
+    # Append "seen in logs" values (SQLite) for easier discovery of users/devices
+    # that appear in command logs but may not exist in policy.
+    seen_scope_ips = None
+    if group_filter:
+        seen_scope_ips = set(group_ips)
+    elif scope_ips is not None:
+        seen_scope_ips = set(scope_ips)
+
+    seen_users, seen_devices = _sqlite_seen_choices(
+        tab='command',
+        start_dt=start_dt,
+        end_dt=end_dt,
+        scope_ips=seen_scope_ips,
+        noise_users=noise_users,
+    )
+    cmd_user_list = _merge_unique(cmd_user_list, seen_users)
+    cmd_device_list = _merge_unique(cmd_device_list, seen_devices)
+
+    # Ensure current selections remain visible even if not in the lists
+    if cmd_user_filter and cmd_user_filter not in cmd_user_list:
+        cmd_user_list.append(cmd_user_filter)
+    if cmd_device_filter and cmd_device_filter not in cmd_device_list:
+        cmd_device_list.append(cmd_device_filter)
 
     # Base args for pagination links
     _base_args = {
@@ -1574,10 +1742,21 @@ def command():
 def filter_choices_api():
     """AJAX helper: return dropdown choices for User/Device based on Device Group.
 
-    - Uses policy.json (stable) and admin scope restriction.
-    - Does NOT depend on recent logs, so options won't disappear.
+    Hybrid mode:
+      - Base list from policy.json (stable, scope-restricted)
+      - Append "seen in logs" values from SQLite (within scope) so that
+        users/devices can still be discovered even if removed from policy.
+
+    Query params:
+      - group: device_group_id (optional)
+      - tab: 'auth' or 'command' (optional; default 'auth')
+      - date_from/date_to: optional date range (YYYY-MM-DD)
+
+    Security:
+      - Admin is always restricted to devices in their allowed groups.
     """
     group_id = (request.args.get("group") or "").strip().lower()
+    tab = (request.args.get("tab") or "auth").strip().lower()
 
     # base choices (scope-restricted)
     user_list, device_list = _get_filter_choices_from_policy()
@@ -1586,16 +1765,39 @@ def filter_choices_api():
     _groups, group_to_ips = _get_device_groups_and_ips()
     group_ips = set(group_to_ips.get(group_id, [])) if group_id else set()
 
+    # Determine scope for "seen" queries
+    scope_ips = _scope_device_ips_for_admin(group_to_ips=group_to_ips)
+    seen_scope_ips = None
     if group_id:
-        # Narrow devices to only the selected group
+        seen_scope_ips = set(group_ips)
+    elif scope_ips is not None:
+        seen_scope_ips = set(scope_ips)
+
+    # Apply UX narrowing for the selected group (policy-driven)
+    if group_id:
         device_list = sorted(group_ips)
-        # Narrow users to those relevant to this group (global / in-group / target-OLT intersects)
         user_list = _narrow_user_list_to_group(
             user_list,
             group_id=group_id,
             group_ips=group_ips,
-            selected_user="",  # for AJAX we reset if no longer valid
+            selected_user="",
         )
+
+    # Optional date window for "seen" list
+    _df, _dt, start_dt, end_dt = _get_date_filters()
+
+    noise_users, _default_hide_noise = _get_noise_users()
+
+    seen_users, seen_devices = _sqlite_seen_choices(
+        tab=('command' if tab == 'command' else 'auth'),
+        start_dt=start_dt,
+        end_dt=end_dt,
+        scope_ips=seen_scope_ips,
+        noise_users=noise_users,
+    )
+
+    user_list = _merge_unique(user_list, seen_users)
+    device_list = _merge_unique(device_list, seen_devices)
 
     return jsonify({"users": user_list, "devices": device_list})
 
