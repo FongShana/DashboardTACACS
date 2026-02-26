@@ -216,6 +216,31 @@ def _get_group_filter() -> str:
     return (request.args.get('group') or '').strip().lower()
 
 
+def _scope_device_ips_for_admin(*, group_to_ips: dict) -> set[str] | None:
+    """Return device IPs the current web user is allowed to see.
+
+    - superadmin -> None (no restriction)
+    - admin -> union of device IPs in allowed device groups
+
+    Note: group_to_ips passed in is already restricted by admin scope (see
+    _get_device_groups_and_ips), so we can safely union its values.
+    """
+    allowed = _allowed_group_ids_from_session()
+    if allowed is None:
+        return None
+
+    ips: set[str] = set()
+    try:
+        for _gid, arr in (group_to_ips or {}).items():
+            for ip in (arr or []):
+                s = (ip or "").strip()
+                if s:
+                    ips.add(s)
+    except Exception:
+        return set()
+    return ips
+
+
 
 _DISPLAY_TZ = ZoneInfo("Asia/Bangkok")
 
@@ -1088,6 +1113,18 @@ def auth():
     group_list, group_to_ips = _get_device_groups_and_ips()
     group_ips = set(group_to_ips.get(group_filter, [])) if group_filter else set()
 
+    # Enforce admin visibility scope even when no group is selected.
+    # - superadmin -> no restriction
+    # - admin -> only devices in their allowed groups
+    scope_ips = _scope_device_ips_for_admin(group_to_ips=group_to_ips)
+    query_group_filter = group_filter
+    query_group_ips = group_ips
+    if not group_filter and scope_ips is not None:
+        # Reuse the existing "group" filter path in SQLite/file-scan code
+        # without changing UI state.
+        query_group_filter = "__scope__"
+        query_group_ips = scope_ips
+
     noise_users, default_hide_noise = _get_noise_users()
     hn_vals = request.args.getlist("hide_noise")
     hide_noise = _parse_bool(hn_vals[-1] if hn_vals else None, default=default_hide_noise)
@@ -1150,8 +1187,8 @@ def auth():
             user=user_filter,
             device=device_filter,
             result=result_filter,
-            group_ips=group_ips,
-            group_filter=group_filter,
+            group_ips=query_group_ips,
+            group_filter=query_group_filter,
             hide_noise=hide_noise,
             noise_users=noise_users,
         )
@@ -1233,9 +1270,10 @@ def auth():
             filtered_events = _filter_out_noise(filtered_events, noise_users)
             events_for_lists = _filter_out_noise(events_for_lists, noise_users)
 
-        if group_filter:
-            filtered_events = _filter_events_by_group(filtered_events, group_ips)
-            events_for_lists = _filter_events_by_group(events_for_lists, group_ips)
+        # Enforce admin scope (even when no group is selected)
+        if query_group_filter:
+            filtered_events = _filter_events_by_group(filtered_events, query_group_ips)
+            events_for_lists = _filter_events_by_group(events_for_lists, query_group_ips)
 
         total_events = len(filtered_events)
         total_success = sum(
@@ -1333,6 +1371,18 @@ def command():
     group_list, group_to_ips = _get_device_groups_and_ips()
     group_ips = set(group_to_ips.get(group_filter, [])) if group_filter else set()
 
+    # Enforce admin visibility scope even when no group is selected.
+    # - superadmin -> no restriction
+    # - admin -> only devices in their allowed groups
+    scope_ips = _scope_device_ips_for_admin(group_to_ips=group_to_ips)
+    query_group_filter = group_filter
+    query_group_ips = group_ips
+    if not group_filter and scope_ips is not None:
+        # Reuse the existing "group" filter path in SQLite/file-scan code
+        # without changing UI state.
+        query_group_filter = "__scope__"
+        query_group_ips = scope_ips
+
     date_from, date_to, start_dt, end_dt = _get_date_filters()
 
     noise_users, default_hide_noise = _get_noise_users()
@@ -1400,8 +1450,8 @@ def command():
             cmd_user=cmd_user_filter,
             cmd_device=cmd_device_filter,
             cmd_contains=cmd_contains_filter,
-            group_ips=group_ips,
-            group_filter=group_filter,
+            group_ips=query_group_ips,
+            group_filter=query_group_filter,
             hide_noise=hide_noise,
             noise_users=noise_users,
         )
@@ -1441,8 +1491,8 @@ def command():
         if hide_noise:
             all_events = _filter_out_noise(all_events, noise_users)
 
-        if group_filter:
-            all_events = _filter_events_by_group(all_events, group_ips)
+        if query_group_filter:
+            all_events = _filter_events_by_group(all_events, query_group_ips)
 
         total_cmd = len(all_events)
         cmd_unique_user_count = len({e.get("user") for e in all_events if e.get("user")})
