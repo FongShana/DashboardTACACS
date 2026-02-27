@@ -40,7 +40,6 @@ def main(argv: list[str] | None = None) -> int:
             parse_authc=log_parser._parse_authc,
             parse_authz=log_parser._parse_authz,
             parse_acct=log_parser._parse_acct,
-            parse_conn=log_parser._parse_conn,
             full=bool(args.full),
         )
     except Exception as e:
