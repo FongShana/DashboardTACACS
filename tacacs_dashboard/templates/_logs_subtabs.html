@@ -2,10 +2,11 @@
   <a
     href="{{ url_for('logs.auth', group=group_filter, user=user_filter, device=device_filter, result=result_filter, cmd_user=cmd_user_filter, cmd_device=cmd_device_filter, cmd_contains=cmd_contains_filter, date_from=date_from, date_to=date_to, hide_noise=('1' if hide_noise else '0'), auth_page=auth_page, cmd_page=cmd_page ) }}"
     class="subtab {% if active_logs_subpage=='auth' %}subtab-active{% endif %}"
-  >Auth &amp; Session Logs</a>
+  >All Logs</a>
 
   <a
     href="{{ url_for('logs.command', group=group_filter, user=user_filter, device=device_filter, result=result_filter, cmd_user=cmd_user_filter, cmd_device=cmd_device_filter, cmd_contains=cmd_contains_filter, date_from=date_from, date_to=date_to, hide_noise=('1' if hide_noise else '0'), auth_page=auth_page, cmd_page=cmd_page ) }}"
     class="subtab {% if active_logs_subpage=='command' %}subtab-active{% endif %}"
   >Command Audit</a>
 </div>
+
