@@ -207,7 +207,7 @@
   <div class="muted" style="margin-top: 8px;">
     แสดงผลตาม filter ปัจจุบัน: <b>{{ total_cmd }}</b> รายการ | Users: <b>{{ cmd_unique_user_count }}</b> | Devices: <b>{{ cmd_unique_device_count }}</b>
     {% if scan_all_cmd %}
-      | <span class="badge badge-neutral">scan all acct logs</span>
+      | <span class="badge badge-neutral">Filtered</span>
     {% endif %}
     {% if cmd_contains_filter %}
       | Keyword: <span class="badge badge-neutral">{{ cmd_contains_filter }}</span>

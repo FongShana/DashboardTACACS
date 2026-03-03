@@ -25,17 +25,6 @@
       <div class="card-value">{{ cmd_unique_device_count }}</div>
       <div class="card-sub">OLT / Device ที่มี command</div>
     </div>
-    <div class="card">
-      <div class="card-label">Mode</div>
-      <div class="card-value" style="font-size: 1.0rem;">
-        {% if scan_all_cmd %}
-          scan all acct logs
-        {% else %}
-          fast (recent)
-        {% endif %}
-      </div>
-      <div class="card-sub">ค้นย้อนหลังเฉพาะเมื่อมี filter</div>
-    </div>
   </div>
 </section>
 
@@ -190,7 +179,7 @@
   <div class="muted" style="margin-top: 8px;">
     แสดงผลตาม filter ปัจจุบัน: <b>{{ total_cmd }}</b> รายการ | Users: <b>{{ cmd_unique_user_count }}</b> | Devices: <b>{{ cmd_unique_device_count }}</b>
     {% if scan_all_cmd %}
-      | <span class="badge badge-neutral">scan all acct logs</span>
+      | <span class="badge badge-neutral">Filtered</span>
     {% endif %}
     {% if cmd_contains_filter %}
       | Keyword: <span class="badge badge-neutral">{{ cmd_contains_filter }}</span>
