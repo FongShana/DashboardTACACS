@@ -192,6 +192,24 @@
     <button type="button" class="btn btn-secondary btn-sm" id="zteTplReset">Reset</button>
   </div>
 
+  <div class="form-grid" style="margin-top:0.75rem;">
+    <div class="form-row">
+      <label for="zteTplGroupFilter">Device Group</label>
+      <select class="input" id="zteTplGroupFilter">
+        <option value="__ALL__">-- All --</option>
+        {% set seen2 = namespace(gids=[]) %}
+        {% for d in devices %}
+          {% set gid = (d.group_id or '') %}
+          {% if gid and gid not in seen2.gids %}
+            {% set _ = seen2.gids.append(gid) %}
+            <option value="{{ gid }}">{{ d.group_label }}</option>
+          {% endif %}
+        {% endfor %}
+      </select>
+      <div class="hint">Filter ตารางตาม Device Group</div>
+    </div>
+  </div>
+
   <div class="table-wrapper" style="margin-top:0.75rem;">
     <table class="table" id="zteTplTable">
       <thead>
@@ -225,13 +243,25 @@
     </table>
   </div>
 
+  <div id="zteTplPager" style="display:none; align-items:center; justify-content:space-between; gap:12px; margin-top: 12px;">
+    <div class="muted" style="font-size: 13px;" id="zteTplPageInfo"></div>
+    <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;" id="zteTplPagerButtons"></div>
+  </div>
+
   <script>
     (function () {
-      const selGroup = document.getElementById('olt_group');
+      const selGroup = document.getElementById('zteTplGroupFilter');
       const table = document.getElementById('zteTplTable');
       const btnCheckVisible = document.getElementById('zteTplCheckVisible');
       const btnReset = document.getElementById('zteTplReset');
       if (!table) return;
+
+      const pagerWrap = document.getElementById('zteTplPager');
+      const pagerInfo = document.getElementById('zteTplPageInfo');
+      const pagerButtons = document.getElementById('zteTplPagerButtons');
+
+      const PAGE_SIZE = 10;
+      let currentPage = 1;
 
       const endpointBase = "{{ url_for('users.zte_template_status') }}";
 
@@ -303,20 +333,99 @@
         await Promise.all(workers);
       }
 
-      function applyTableFilter() {
-        const gid = selGroup ? selGroup.value : '';
-        const rows = Array.from(table.querySelectorAll('tbody tr[data-ip]'));
+      function pageItems(totalPages, page) {
+        // mimic logs pagination: show 1, ..., p-1,p,p+1, ..., last
+        const items = [];
+        if (totalPages <= 7) {
+          for (let i = 1; i <= totalPages; i++) items.push(i);
+          return items;
+        }
+        items.push(1);
+        const left = Math.max(2, page - 1);
+        const right = Math.min(totalPages - 1, page + 1);
+        if (left > 2) items.push(null);
+        for (let i = left; i <= right; i++) items.push(i);
+        if (right < totalPages - 1) items.push(null);
+        items.push(totalPages);
+        return items;
+      }
 
-        rows.forEach(tr => {
-          const rg = (tr.getAttribute('data-gid') || '').toLowerCase();
-          if (!gid) {
-            tr.hidden = false;
-          } else if (gid === '__ALL__') {
-            tr.hidden = false;
+      function getFilteredRows() {
+        const gid = selGroup ? (selGroup.value || '__ALL__') : '__ALL__';
+        const rows = Array.from(table.querySelectorAll('tbody tr[data-ip]'));
+        if (gid === '__ALL__') return rows;
+        const want = gid.toLowerCase();
+        return rows.filter(tr => ((tr.getAttribute('data-gid') || '').toLowerCase() === want));
+      }
+
+      function renderPager(total, start, end, totalPages) {
+        if (!pagerWrap || !pagerButtons || !pagerInfo) return;
+        if (totalPages <= 1) {
+          pagerWrap.style.display = 'none';
+          pagerButtons.innerHTML = '';
+          pagerInfo.textContent = '';
+          return;
+        }
+
+        pagerWrap.style.display = 'flex';
+        pagerInfo.textContent = `Showing ${total ? (start + 1) : 0}-${end} of ${total}`;
+
+        function btn(label, onClick, opts) {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.textContent = label;
+          b.className = (opts && opts.active) ? 'btn btn-primary' : 'btn btn-secondary';
+          b.style.padding = '6px 10px';
+          b.style.fontSize = '13px';
+          if (opts && opts.disabled) {
+            b.style.opacity = '.5';
+            b.style.pointerEvents = 'none';
           } else {
-            tr.hidden = (rg !== gid.toLowerCase());
+            b.addEventListener('click', onClick);
           }
-        });
+          return b;
+        }
+
+        pagerButtons.innerHTML = '';
+
+        // Prev
+        pagerButtons.appendChild(btn('Prev', () => { currentPage = Math.max(1, currentPage - 1); renderTable(); }, { disabled: currentPage <= 1 }));
+
+        // Pages
+        for (const it of pageItems(totalPages, currentPage)) {
+          if (it === null) {
+            const s = document.createElement('span');
+            s.className = 'muted';
+            s.style.padding = '0 6px';
+            s.textContent = '…';
+            pagerButtons.appendChild(s);
+            continue;
+          }
+          pagerButtons.appendChild(btn(String(it), () => { currentPage = it; renderTable(); }, { active: it === currentPage }));
+        }
+
+        // Next
+        pagerButtons.appendChild(btn('Next', () => { currentPage = Math.min(totalPages, currentPage + 1); renderTable(); }, { disabled: currentPage >= totalPages }));
+      }
+
+      function renderTable() {
+        const allRows = Array.from(table.querySelectorAll('tbody tr[data-ip]'));
+        const rows = getFilteredRows();
+
+        const total = rows.length;
+        const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+        if (currentPage > totalPages) currentPage = totalPages;
+
+        const start = (currentPage - 1) * PAGE_SIZE;
+        const end = Math.min(start + PAGE_SIZE, total);
+
+        // Hide all, then show only current page rows
+        allRows.forEach(tr => { tr.hidden = true; });
+        for (let i = start; i < end; i++) {
+          if (rows[i]) rows[i].hidden = false;
+        }
+
+        renderPager(total, start, end, totalPages);
       }
 
       // Hook per-row button
@@ -343,12 +452,13 @@
 
       if (selGroup) {
         selGroup.addEventListener('change', function () {
-          applyTableFilter();
+          currentPage = 1;
+          renderTable();
         });
       }
 
-      // Initial filter mirrors the dropdown state
-      applyTableFilter();
+      // Initial render
+      renderTable();
     })();
   </script>
 </section>
