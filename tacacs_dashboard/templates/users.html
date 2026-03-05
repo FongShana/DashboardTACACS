@@ -1066,8 +1066,28 @@
 
 <section class="section">
   <h2 class="section-title">Users</h2>
+
+  <div class="form-grid" style="margin: 0.25rem 0 0.75rem;">
+    <div class="form-row">
+      <label for="usersGroupFilter">Device Group</label>
+      <select class="input" id="usersGroupFilter">
+        <option value="__ALL__">-- All --</option>
+        {# Build options from current users list (shown label). #}
+        {% set seen_ugs = namespace(items=[]) %}
+        {% for user in users %}
+          {% set ug = (user.device_groups_label or 'All OLTs') %}
+          {% if ug and ug not in seen_ugs.items %}
+            {% set _ = seen_ugs.items.append(ug) %}
+            <option value="{{ ug }}">{{ ug }}</option>
+          {% endif %}
+        {% endfor %}
+      </select>
+      <div class="hint">Filter ตาราง Users ตาม Device Group (Scope)</div>
+    </div>
+  </div>
+
   <div class="table-wrapper">
-    <table class="table">
+    <table class="table" id="usersTable">
       <thead>
         <tr>
           <th>Username</th>
@@ -1082,7 +1102,7 @@
       </thead>
       <tbody>
         {% for user in users %}
-        <tr>
+        <tr data-username="{{ user.username }}" data-ug="{{ user.device_groups_label or 'All OLTs' }}">
           <td>{{ user.username }}</td>
           <td>{{ user.first_name or "-" }}</td>
           <td>{{ user.last_name or "-" }}</td>
@@ -1116,9 +1136,169 @@
           <td colspan="{% if is_superadmin %}8{% else %}7{% endif %}">ยังไม่มีผู้ใช้ในระบบ</td>
         </tr>
         {% endfor %}
+
+        {# For client-side filter/pagination when there are users but none match filter #}
+        <tr id="usersNoMatchRow" style="display:none;">
+          <td colspan="{% if is_superadmin %}8{% else %}7{% endif %}">ไม่พบผู้ใช้ที่ตรงกับเงื่อนไข</td>
+        </tr>
       </tbody>
     </table>
   </div>
+
+  <div id="usersPager" style="display:none; align-items:center; justify-content:space-between; gap:12px; margin-top: 12px;">
+    <div class="muted" style="font-size: 13px;" id="usersPageInfo"></div>
+    <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;" id="usersPagerButtons"></div>
+  </div>
+
+  <script>
+    (function () {
+      const table = document.getElementById('usersTable');
+      const selGroup = document.getElementById('usersGroupFilter');
+      const noMatchRow = document.getElementById('usersNoMatchRow');
+      if (!table) return;
+
+      const pagerWrap = document.getElementById('usersPager');
+      const pagerInfo = document.getElementById('usersPageInfo');
+      const pagerButtons = document.getElementById('usersPagerButtons');
+
+      const PAGE_SIZE = 10;
+      let currentPage = 1;
+
+      const initUrl = new URL(window.location.href);
+      const initGroup = initUrl.searchParams.get('users_ug');
+      const initPage = parseInt(initUrl.searchParams.get('users_page') || '1', 10);
+      if (selGroup && initGroup) selGroup.value = initGroup;
+      if (!Number.isNaN(initPage) && initPage > 0) currentPage = initPage;
+
+      function setUrlState() {
+        try {
+          const u = new URL(window.location.href);
+          if (selGroup && selGroup.value && selGroup.value !== '__ALL__') {
+            u.searchParams.set('users_ug', selGroup.value);
+          } else {
+            u.searchParams.delete('users_ug');
+          }
+          if (currentPage > 1) u.searchParams.set('users_page', String(currentPage));
+          else u.searchParams.delete('users_page');
+          history.replaceState(null, '', u);
+        } catch (e) {
+          // no-op
+        }
+      }
+
+      function pageItems(totalPages, page) {
+        const items = [];
+        if (totalPages <= 7) {
+          for (let i = 1; i <= totalPages; i++) items.push(i);
+          return items;
+        }
+        items.push(1);
+        const left = Math.max(2, page - 1);
+        const right = Math.min(totalPages - 1, page + 1);
+        if (left > 2) items.push(null);
+        for (let i = left; i <= right; i++) items.push(i);
+        if (right < totalPages - 1) items.push(null);
+        items.push(totalPages);
+        return items;
+      }
+
+      function getAllRows() {
+        return Array.from(table.querySelectorAll('tbody tr[data-username]'));
+      }
+
+      function getFilteredRows() {
+        const want = selGroup ? (selGroup.value || '__ALL__') : '__ALL__';
+        const rows = getAllRows();
+        if (want === '__ALL__') return rows;
+        const wantLc = want.toLowerCase();
+        return rows.filter(tr => ((tr.getAttribute('data-ug') || '').toLowerCase() === wantLc));
+      }
+
+      function renderPager(total, start, end, totalPages) {
+        if (!pagerWrap || !pagerButtons || !pagerInfo) return;
+        if (totalPages <= 1) {
+          pagerWrap.style.display = 'none';
+          pagerButtons.innerHTML = '';
+          pagerInfo.textContent = '';
+          return;
+        }
+
+        pagerWrap.style.display = 'flex';
+        pagerInfo.textContent = `Showing ${total ? (start + 1) : 0}-${end} of ${total}`;
+
+        function btn(label, onClick, opts) {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.textContent = label;
+          b.className = (opts && opts.active) ? 'btn btn-primary' : 'btn btn-secondary';
+          b.style.padding = '6px 10px';
+          b.style.fontSize = '13px';
+          if (opts && opts.disabled) {
+            b.style.opacity = '.5';
+            b.style.pointerEvents = 'none';
+          } else {
+            b.addEventListener('click', onClick);
+          }
+          return b;
+        }
+
+        pagerButtons.innerHTML = '';
+        pagerButtons.appendChild(btn('Prev', () => { currentPage = Math.max(1, currentPage - 1); renderTable(); }, { disabled: currentPage <= 1 }));
+        for (const it of pageItems(totalPages, currentPage)) {
+          if (it === null) {
+            const s = document.createElement('span');
+            s.className = 'muted';
+            s.style.padding = '0 6px';
+            s.textContent = '…';
+            pagerButtons.appendChild(s);
+            continue;
+          }
+          pagerButtons.appendChild(btn(String(it), () => { currentPage = it; renderTable(); }, { active: it === currentPage }));
+        }
+        pagerButtons.appendChild(btn('Next', () => { currentPage = Math.min(totalPages, currentPage + 1); renderTable(); }, { disabled: currentPage >= totalPages }));
+      }
+
+      function renderTable() {
+        const allRows = getAllRows();
+        const rows = getFilteredRows();
+        const total = rows.length;
+        const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+        if (currentPage > totalPages) currentPage = totalPages;
+
+        const start = (currentPage - 1) * PAGE_SIZE;
+        const end = Math.min(start + PAGE_SIZE, total);
+
+        // Hide all user rows
+        allRows.forEach(tr => { tr.hidden = true; });
+
+        // Show current page slice
+        for (let i = start; i < end; i++) {
+          if (rows[i]) rows[i].hidden = false;
+        }
+
+        // No-match row
+        if (noMatchRow) {
+          if (getAllRows().length > 0 && total === 0) {
+            noMatchRow.style.display = '';
+          } else {
+            noMatchRow.style.display = 'none';
+          }
+        }
+
+        renderPager(total, start, end, totalPages);
+        setUrlState();
+      }
+
+      if (selGroup) {
+        selGroup.addEventListener('change', function () {
+          currentPage = 1;
+          renderTable();
+        });
+      }
+
+      renderTable();
+    })();
+  </script>
 </section>
 
 <section class="section">
