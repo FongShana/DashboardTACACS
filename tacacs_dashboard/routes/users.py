@@ -592,23 +592,20 @@ def index():
             # ถ้าไม่มี log ก็เป็น "-"
             u["last_login"] = u.get("last_login") or "-"
 
-
-    
-    # For UI: show device group labels (superadmin view)
-    if is_superadmin:
-        for u in users:
-            if not isinstance(u, dict):
-                continue
-            ugids = _normalize_gid_list(u.get("device_group_ids"))
-            if not ugids:
-                # legacy: device_group_ids ว่าง => เทียบเท่า all OLTs
-                u["device_groups_label"] = "All OLTs"
-            else:
-                parts = []
-                for gid in ugids:
-                    nm = group_name_map.get(gid) or ""
-                    parts.append(f"{nm} ({gid})" if nm else gid)
-                u["device_groups_label"] = ", ".join(parts)
+    # For UI: show device group labels (scoped by web role)
+    for u in users:
+        if not isinstance(u, dict):
+            continue
+        ugids = _normalize_gid_list(u.get("device_group_ids"))
+        if not ugids:
+            # legacy: device_group_ids ว่าง => เทียบเท่า all OLTs
+            u["device_groups_label"] = "All OLTs"
+        else:
+            parts = []
+            for gid in ugids:
+                nm = group_name_map.get(gid) or ""
+                parts.append(f"{nm} ({gid})" if nm else gid)
+            u["device_groups_label"] = ", ".join(parts)
 
     # ✅ OLT choices for Add User form
     # - superadmin: all online OLTs
