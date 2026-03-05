@@ -96,7 +96,7 @@
   <a class="btn btn-sm {% if active_tab != 'zte' %}btn-primary{% else %}btn-secondary{% endif %}"
      href="{{ url_for('users.index') }}?tab=overview">Users &amp; Roles</a>
   <a class="btn btn-sm {% if active_tab == 'zte' %}btn-primary{% else %}btn-secondary{% endif %}"
-     href="{{ url_for('users.index') }}?tab=zte">Emergency (zte template)</a>
+     href="{{ url_for('users.index') }}?tab=zte">Local Account (zte)</a>
 </div>
 
 {% if active_tab == 'zte' %}
