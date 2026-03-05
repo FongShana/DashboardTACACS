@@ -45,10 +45,6 @@
             {{ g.name if g.name is defined else g.get('name','') }} ({{ g.id if g.id is defined else g['id'] }})
           </option>
         {% endfor %}
-
-        <tr id="devicesNoMatchRow" style="display:none;">
-          <td colspan="6">ไม่พบอุปกรณ์ที่ตรงกับเงื่อนไข</td>
-        </tr>
       </select>
       {% if is_scoped_admin and (device_groups|length) == 0 %}
         <div class="hint">บัญชี admin นี้ยังไม่ได้ถูกกำหนด Device Group — กรุณาให้ superadmin กำหนดก่อน</div>
@@ -81,15 +77,12 @@
     <label for="devicesGroupFilter" style="margin:0; font-weight:600;">Device Group</label>
     <select class="input" id="devicesGroupFilter" style="min-width: 220px; max-width: 360px;">
       <option value="__ALL__">-- All --</option>
-      <option value="__NONE__">(none)</option>
       {% for g in device_groups %}
         <option value="{{ g.id if g.id is defined else g['id'] }}">
           {{ g.name if g.name is defined else g.get('name','') }} ({{ g.id if g.id is defined else g['id'] }})
         </option>
       {% endfor %}
     </select>
-
-    <button type="button" class="btn btn-secondary btn-sm" id="devicesFilterReset">Reset</button>
   </div>
 
   <div class="table-wrapper">
@@ -154,6 +147,10 @@
           <td colspan="6">ยังไม่มีอุปกรณ์ในระบบ</td>
         </tr>
         {% endfor %}
+
+        <tr id="devicesNoMatchRow" style="display:none;">
+          <td colspan="6">ไม่พบอุปกรณ์ที่ตรงกับเงื่อนไข</td>
+        </tr>
       </tbody>
     </table>
   </div>
@@ -167,7 +164,6 @@
     (function () {
       const table = document.getElementById('devicesTable');
       const selGroup = document.getElementById('devicesGroupFilter');
-      const resetBtn = document.getElementById('devicesFilterReset');
       const noMatchRow = document.getElementById('devicesNoMatchRow');
       const emptyRow = document.getElementById('devicesEmptyRow');
       if (!table) return;
@@ -223,7 +219,6 @@
         const want = selGroup ? (selGroup.value || '__ALL__') : '__ALL__';
         const rows = getAllRows();
         if (want === '__ALL__') return rows;
-        if (want === '__NONE__') return rows.filter(tr => !(tr.getAttribute('data-gid') || '').trim());
         const wantLc = want.toLowerCase();
         return rows.filter(tr => ((tr.getAttribute('data-gid') || '').toLowerCase() === wantLc));
       }
@@ -303,10 +298,6 @@
 
       if (selGroup) {
         selGroup.addEventListener('change', () => { currentPage = 1; renderTable(); });
-      }
-
-      if (resetBtn) {
-        resetBtn.addEventListener('click', () => { if (selGroup) selGroup.value = '__ALL__'; currentPage = 1; renderTable(); });
       }
 
       renderTable();
