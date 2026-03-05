@@ -37,7 +37,7 @@
   <section class="section">
     <h2 class="section-title">Existing Device Groups</h2>
     <div class="table-wrapper">
-      <table class="table">
+      <table class="table" id="deviceGroupsTable">
         <thead>
           <tr>
             <th>Group ID</th>
@@ -50,7 +50,7 @@
           {% for g in groups %}
             {% set gid = g.id if g.id is defined else g['id'] %}
             {% set nm = g.name if g.name is defined else g.get('name','') %}
-            <tr>
+            <tr data-dg-row="1">
               <td class="text-mono">{{ gid }}</td>
               <td>{{ nm }}</td>
               <td class="text-mono">{{ counts.get(gid, 0) }}</td>
@@ -72,6 +72,129 @@
         </tbody>
       </table>
     </div>
+
+    <div id="deviceGroupsPager" style="display:none; align-items:center; justify-content:space-between; gap:12px; margin-top: 12px;">
+      <div class="muted" style="font-size: 13px;" id="deviceGroupsPageInfo"></div>
+      <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;" id="deviceGroupsPagerButtons"></div>
+    </div>
+
+    <script>
+      (function () {
+        const table = document.getElementById('deviceGroupsTable');
+        if (!table) return;
+
+        const pagerWrap = document.getElementById('deviceGroupsPager');
+        const pagerInfo = document.getElementById('deviceGroupsPageInfo');
+        const pagerButtons = document.getElementById('deviceGroupsPagerButtons');
+
+        const PAGE_SIZE = 10;
+        let currentPage = 1;
+
+        const initUrl = new URL(window.location.href);
+        const initPage = parseInt(initUrl.searchParams.get('dg_page') || '1', 10);
+        if (!Number.isNaN(initPage) && initPage > 0) currentPage = initPage;
+
+        function setUrlState() {
+          try {
+            const u = new URL(window.location.href);
+            if (currentPage > 1) u.searchParams.set('dg_page', String(currentPage));
+            else u.searchParams.delete('dg_page');
+            history.replaceState(null, '', u);
+          } catch (e) {}
+        }
+
+        function pageItems(totalPages, page) {
+          const items = [];
+          if (totalPages <= 7) {
+            for (let i = 1; i <= totalPages; i++) items.push(i);
+            return items;
+          }
+          items.push(1);
+          const left = Math.max(2, page - 1);
+          const right = Math.min(totalPages - 1, page + 1);
+          if (left > 2) items.push(null);
+          for (let i = left; i <= right; i++) items.push(i);
+          if (right < totalPages - 1) items.push(null);
+          items.push(totalPages);
+          return items;
+        }
+
+        function getAllRows() {
+          return Array.from(table.querySelectorAll('tbody tr[data-dg-row="1"]'));
+        }
+
+        function renderPager(total, start, end, totalPages) {
+          if (!pagerWrap || !pagerButtons || !pagerInfo) return;
+          if (totalPages <= 1) {
+            pagerWrap.style.display = 'none';
+            pagerButtons.innerHTML = '';
+            pagerInfo.textContent = '';
+            return;
+          }
+
+          pagerWrap.style.display = 'flex';
+          pagerInfo.textContent = `Showing ${total ? (start + 1) : 0}-${end} of ${total}`;
+
+          function btn(label, onClick, opts) {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.textContent = label;
+            b.className = (opts && opts.active) ? 'btn btn-primary' : 'btn btn-secondary';
+            b.style.padding = '6px 10px';
+            b.style.fontSize = '13px';
+            if (opts && opts.disabled) {
+              b.style.opacity = '.5';
+              b.style.pointerEvents = 'none';
+            } else {
+              b.addEventListener('click', onClick);
+            }
+            return b;
+          }
+
+          pagerButtons.innerHTML = '';
+          pagerButtons.appendChild(btn('Prev', () => { currentPage = Math.max(1, currentPage - 1); renderTable(); }, { disabled: currentPage <= 1 }));
+          for (const it of pageItems(totalPages, currentPage)) {
+            if (it === null) {
+              const s = document.createElement('span');
+              s.className = 'muted';
+              s.style.padding = '0 6px';
+              s.textContent = '…';
+              pagerButtons.appendChild(s);
+              continue;
+            }
+            pagerButtons.appendChild(btn(String(it), () => { currentPage = it; renderTable(); }, { active: it === currentPage }));
+          }
+          pagerButtons.appendChild(btn('Next', () => { currentPage = Math.min(totalPages, currentPage + 1); renderTable(); }, { disabled: currentPage >= totalPages }));
+        }
+
+        function renderTable() {
+          const rows = getAllRows();
+          if (rows.length === 0) {
+            if (pagerWrap) { pagerWrap.style.display = 'none'; if (pagerButtons) pagerButtons.innerHTML = ''; if (pagerInfo) pagerInfo.textContent = ''; }
+            setUrlState();
+            return;
+          }
+
+          const total = rows.length;
+          const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+          if (currentPage > totalPages) currentPage = totalPages;
+
+          const start = (currentPage - 1) * PAGE_SIZE;
+          const end = Math.min(start + PAGE_SIZE, total);
+
+          for (const tr of rows) tr.style.display = 'none';
+          for (let i = start; i < end; i++) {
+            const tr = rows[i];
+            if (tr) tr.style.display = '';
+          }
+
+          renderPager(total, start, end, totalPages);
+          setUrlState();
+        }
+
+        renderTable();
+      })();
+    </script>
 
     <div class="hint" style="margin-top:0.75rem;">
       หลังสร้าง group แล้ว ให้ไปที่ <b>Superadmin: Web Accounts</b> เพื่อกำหนดว่า web admin คนไหนดูแล group ไหน
