@@ -501,8 +501,6 @@
       </select>
     </div>
   </div>
-
-  {% if is_superadmin %}
     <div class="form-row" style="margin-top:0.25rem;">
       <label>Device Groups (Scope)</label>
 <div class="msel" id="dg_msel">
@@ -523,7 +521,7 @@
   {% for g in device_groups %}
     {% set gid = g.id if g.id is defined else g['id'] %}
     {% set nm = g.name if g.name is defined else g.get('name','') %}
-    <option value="{{ gid }}">{{ nm }} ({{ gid }})</option>
+    <option value="{{ gid }}" {% if default_device_group_ids and (gid in default_device_group_ids) %}selected{% endif %}>{{ nm }} ({{ gid }})</option>
   {% else %}
     <option value="" disabled>ยังไม่มี device group — ไปสร้างได้ที่ <b>Superadmin: Device Groups</b></option>
   {% endfor %}
@@ -729,10 +727,8 @@
   syncTags();
 })();
 </script>
-      <div class="hint" style="margin-top:0.35rem;">หมายเหตุ: ถ้าไม่เลือก group เลย ระบบจะไม่ให้บันทึก</div>
+      <div class="hint" style="margin-top:0.35rem;">หมายเหตุ: Superadmin ต้องเลือก Device Group อย่างน้อย 1 กลุ่ม; ส่วน Admin หากไม่เลือก ระบบจะใช้ทุกกลุ่มใน scope (ค่าเริ่มต้น)</div>
     </div>
-  {% endif %}
-
   <div class="form-row" style="margin-top:0.25rem;">
 
     <label for="target_olt_ips">Select OLT</label>

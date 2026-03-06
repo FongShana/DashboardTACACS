@@ -138,11 +138,9 @@
         </select>
       </div>
     </div>
-
-    {% if is_superadmin %}
     <div class="form-row" style="margin-top:0.25rem;">
       <label>Device Groups (Scope)</label>
-      <div class="hint">กำหนดว่า user นี้สามารถใช้งานได้เฉพาะ OLT ใน group ไหน (ต้องเลือกอย่างน้อย 1 กลุ่ม — หากต้องการให้ใช้งานได้ทุก OLT ให้เลือกทุกกลุ่ม)</div>
+      <div class="hint">หมายเหตุ: Superadmin ต้องเลือก Device Group อย่างน้อย 1 กลุ่ม; สำหรับ Admin เลือกได้เฉพาะกลุ่มใน scope และหากไม่ปรับเปลี่ยน ระบบจะคงค่าเดิม</div>
 <div class="msel" id="dg_msel">
   <div class="msel-control" id="dg_msel_control" tabindex="0" aria-haspopup="listbox" aria-expanded="false">
     <div class="msel-tags" id="dg_msel_tags">
@@ -369,8 +367,6 @@
 </script>
       <div class="hint" style="margin-top:0.35rem;">หมายเหตุ: ถ้าไม่เลือก group เลย ระบบจะไม่ให้บันทึก</div>
     </div>
-    {% endif %}
-
     <div class="form-row" style="margin-top:0.25rem;">
 
     <label for="target_olt_ips">Target OLT (Optional)</label>
