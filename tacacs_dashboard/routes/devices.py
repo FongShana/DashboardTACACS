@@ -25,6 +25,26 @@ def _is_valid_ipv4(ip: str) -> bool:
     return all(0 <= n <= 255 for n in nums)
 
 
+def _normalize_ip(ip: str) -> str:
+    return (ip or "").strip()
+
+
+def _find_device_by_ip(devices: list, ip: str, *, exclude_name: str | None = None):
+    """Return first device dict that matches IP (supports legacy 'address')."""
+    nip = _normalize_ip(ip)
+    if not nip:
+        return None
+    for d in devices or []:
+        if not isinstance(d, dict):
+            continue
+        if exclude_name and (d.get("name") or "") == exclude_name:
+            continue
+        dip = _normalize_ip(d.get("ip") or d.get("address") or "")
+        if dip and dip == nip:
+            return d
+    return None
+
+
 def _current_scope():
     role = (session.get("web_role") or "admin").strip().lower()
     uname = (session.get("web_username") or "").strip()
@@ -152,9 +172,9 @@ def index():
 
 @bp.post("/create")
 def create_device_form():
-    name = request.form.get("name")
-    ip = request.form.get("ip")
-    vendor = request.form.get("vendor", "")
+    name = (request.form.get("name") or "").strip()
+    ip = (request.form.get("ip") or "").strip()
+    vendor = (request.form.get("vendor", "") or "").strip()
     group_id = (request.form.get("group_id") or "").strip().lower()
     # UX: "Add Device" should only add to policy.json.
     # Bootstrap is a separate explicit action (safer).
@@ -192,6 +212,15 @@ def create_device_form():
                 devices = []
             if any(isinstance(d, dict) and d.get("name") == name for d in devices):
                 raise ValueError(f"Device {name} มีอยู่แล้ว")
+
+            dup = _find_device_by_ip(devices, ip)
+            if dup is not None:
+                # Don't leak other groups/devices to scoped admins.
+                if (session.get("web_role") or "admin").strip().lower() == "superadmin":
+                    raise ValueError(
+                        f"IP {ip} ถูกใช้งานแล้วในระบบ (device: {(dup.get('name') or '').strip() or '-'})."
+                    )
+                raise ValueError(f"IP {ip} ถูกใช้งานแล้วในระบบ")
 
             devices.append({
                 "name": name,
@@ -393,6 +422,20 @@ def edit_device_submit(name):
         flash(f"IP {ip} ไม่ใช่ IPv4 ที่ถูกต้อง", "error")
         return redirect(url_for("devices.edit_device_form", name=name))
 
+    # Prevent duplicate IP across all devices.
+    # (Don't leak other groups/devices to scoped admins.)
+    if ip and ip.strip() and ip.strip() != (old_ip or "").strip():
+        dup = _find_device_by_ip(devices, ip, exclude_name=name)
+        if dup is not None:
+            if role == "superadmin":
+                flash(
+                    f"IP {ip} ถูกใช้งานแล้วในระบบ (device: {(dup.get('name') or '').strip() or '-'}).",
+                    "error",
+                )
+            else:
+                flash(f"IP {ip} ถูกใช้งานแล้วในระบบ", "error")
+            return redirect(url_for("devices.edit_device_form", name=name))
+
     if allowed_gids is not None:
         if not allowed_gids:
             flash("บัญชี admin นี้ยังไม่ได้ถูกกำหนด Device Group — กรุณาให้ superadmin กำหนดก่อน", "error")
@@ -438,6 +481,14 @@ def edit_device_submit(name):
 
             target2["vendor"] = vendor
             if ip:
+                # Re-check under lock to avoid race conditions.
+                dup2 = _find_device_by_ip(devices2, ip, exclude_name=name)
+                if dup2 is not None:
+                    if (session.get("web_role") or "admin").strip().lower() == "superadmin":
+                        raise ValueError(
+                            f"IP {ip} ถูกใช้งานแล้วในระบบ (device: {(dup2.get('name') or '').strip() or '-'})."
+                        )
+                    raise ValueError(f"IP {ip} ถูกใช้งานแล้วในระบบ")
                 target2["ip"] = ip
                 if ip.strip() and ip.strip() != (old_ip or "").strip():
                     target2["bootstrap_done"] = False
