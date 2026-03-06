@@ -6,6 +6,41 @@ from .olt_telnet import telnet_exec_commands
 from .policy_store import is_reserved_olt_username
 
 
+def _guard_deprovision_provision_user(*, olt_ip: str, username: str) -> None:
+    """Safety guard: prevent removing the provisioning account when zte is locked down.
+
+    Rationale:
+    - In this project, when local account `zte` is switched to Template 128, it is
+      effectively a break-glass account and often cannot login while TACACS is up.
+    - If we delete the provisioning account (e.g., `tac_prov`) from that OLT while
+      `zte` is on Template 128, the dashboard may not be able to add it back via
+      local login, creating a lock-out risk.
+
+    Policy:
+    - Allow deprovision only when `zte` is confirmed on Template 1.
+    - If template is 128/unknown/mismatch/other -> block.
+    """
+    prov_user = (_read_env("OLT_PROVISION_USER", "") or "").strip()
+    if not prov_user:
+        return
+
+    if (username or "").strip().lower() != prov_user.lower():
+        return
+
+    # Lazy import to avoid extra cost for non-provision-user paths.
+    from .zte_template_status import get_zte_template_status, template_label
+
+    st = get_zte_template_status(olt_ip)
+    if (getattr(st, "template", "") or "").strip() != "1":
+        lbl = template_label(st)
+        raise RuntimeError(
+            f"Refusing to remove provisioning user '{prov_user}' from OLT {olt_ip}. "
+            f"Local account 'zte' is currently {lbl}. "
+            f"Please revert zte to Template 1 first (Users & Roles -> Local Account (zte) -> Revert), "
+            f"then try again."
+        )
+
+
 
 def _select_olt_login_creds(*, target_username: str) -> tuple[str, str]:
     """Pick telnet login credentials for OLT provisioning.
@@ -106,6 +141,9 @@ def deprovision_user_on_olt(
 
     if not login_pass:
         raise RuntimeError("OLT_PROVISION_PASSWORD or OLT_ADMIN_PASSWORD not set in secret.env")
+
+    # Safety: do not allow removing provisioning account if zte is not Template 1.
+    _guard_deprovision_provision_user(olt_ip=olt_ip, username=username)
 
     # กันพลาด: ไม่ให้ลบ account ที่ใช้ provision อยู่
     if (username or '').strip().lower() == (login_user or '').strip().lower():
