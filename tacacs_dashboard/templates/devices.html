@@ -93,6 +93,7 @@
           <th>Vendor</th>
           <th>IP</th>
           <th>Group</th>
+          <th>Updated</th>
           <th>Status</th>
           <th>Actions</th>
         </tr>
@@ -104,6 +105,7 @@
           <td>{{ d.vendor }}</td>
           <td>{{ d.ip }}</td>
           <td>{{ d.group_name if d.group_name is defined else '-' }}</td>
+          <td style="white-space: nowrap;">{{ d.updated_at or d.created_at or '-' }}</td>
           <td>
   {% set _st = (d.status or '')|string|lower %}
   {% if _st == 'online' %}
@@ -144,12 +146,12 @@
         </tr>
         {% else %}
         <tr id="devicesEmptyRow">
-          <td colspan="6">ยังไม่มีอุปกรณ์ในระบบ</td>
+          <td colspan="7">ยังไม่มีอุปกรณ์ในระบบ</td>
         </tr>
         {% endfor %}
 
         <tr id="devicesNoMatchRow" style="display:none;">
-          <td colspan="6">ไม่พบอุปกรณ์ที่ตรงกับเงื่อนไข</td>
+          <td colspan="7">ไม่พบอุปกรณ์ที่ตรงกับเงื่อนไข</td>
         </tr>
       </tbody>
     </table>

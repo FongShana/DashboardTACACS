@@ -1,5 +1,6 @@
 import re
 import subprocess
+from datetime import datetime
 from flask import Blueprint, render_template, request, redirect, url_for, flash, session
 
 from tacacs_dashboard.services.policy_store import load_policy, update_policy
@@ -13,6 +14,11 @@ from tacacs_dashboard.services.device_groups_store import list_device_groups, ge
 bp = Blueprint("devices", __name__)
 
 NAME_RE = re.compile(r"^[^\W\d_][\w\-\u0E31-\u0E4E]{2,31}$", re.UNICODE)
+
+
+def _now_iso() -> str:
+    """Return ISO timestamp (seconds precision) for policy.json metadata fields."""
+    return datetime.now().replace(microsecond=0).isoformat()
 
 def _is_valid_ipv4(ip: str) -> bool:
     parts = ip.split(".")
@@ -222,6 +228,7 @@ def create_device_form():
                     )
                 raise ValueError(f"IP {ip} ถูกใช้งานแล้วในระบบ")
 
+            now = _now_iso()
             devices.append({
                 "name": name,
                 "vendor": vendor,
@@ -229,6 +236,9 @@ def create_device_form():
                 "group_id": group_id,
                 # Mark as not bootstrapped yet (will show status=Unknown until bootstrap is done)
                 "bootstrap_done": False,
+                # Metadata for dashboard display
+                "created_at": now,
+                "updated_at": now,
             })
             policy["devices"] = devices
 
@@ -496,6 +506,13 @@ def edit_device_submit(name):
             # Stop storing status in policy.json (status is computed at runtime)
             target2.pop("status", None)
             target2["group_id"] = group_id
+
+            # Metadata for dashboard display
+            now = _now_iso()
+            if not (target2.get("created_at") or "").strip():
+                # Backward compatible for older entries that didn't track timestamps.
+                target2["created_at"] = now
+            target2["updated_at"] = now
 
         update_policy(_mut)
     except ValueError as e:
