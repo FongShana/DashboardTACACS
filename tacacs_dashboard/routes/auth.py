@@ -1,8 +1,11 @@
 # tacacs_dashboard/routes/auth.py
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
+
+import subprocess
+from pathlib import Path
 
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
 
@@ -265,3 +268,187 @@ def web_user_device_groups_submit(username: str):
     return redirect(url_for("auth.web_users"))
 
 
+
+# -----------------------------
+# Superadmin: Log file manager
+# -----------------------------
+
+
+def _fmt_bytes(n: int) -> str:
+    try:
+        n = int(n)
+    except Exception:
+        return "-"
+
+    if n < 1024:
+        return f"{n} B"
+    for unit in ("KB", "MB", "GB", "TB"):
+        n = n / 1024.0
+        if n < 1024:
+            return f"{n:.1f} {unit}"
+    return f"{n:.1f} PB"
+
+
+def _build_page_numbers(page: int, total_pages: int, window: int = 3) -> list[int]:
+    if total_pages <= 1:
+        return [1]
+    start = max(1, page - window)
+    end = min(total_pages, page + window)
+    return list(range(start, end + 1))
+
+
+@bp.route("/admin/log-files", methods=["GET"])
+def admin_log_files():
+    # Web auth is already enforced globally; keep this as a hard authorization check.
+    if not _is_superadmin():
+        abort(403)
+
+    from tacacs_dashboard.services.log_files import iter_log_files
+    from tacacs_dashboard.services.log_sqlite import _env_bool
+
+    # Feature flag (disabled by default for safety)
+    delete_enabled = bool(_env_bool("LOG_FILE_DELETE_ENABLED", default=False))
+
+    kind = (request.args.get("kind") or "").strip()
+    date_from_s = (request.args.get("from") or "").strip()
+    date_to_s = (request.args.get("to") or "").strip()
+
+    d_from = None
+    d_to = None
+    try:
+        if date_from_s:
+            d_from = date.fromisoformat(date_from_s)
+    except Exception:
+        d_from = None
+    try:
+        if date_to_s:
+            d_to = date.fromisoformat(date_to_s)
+    except Exception:
+        d_to = None
+
+    files = list(iter_log_files())
+
+    # Filter
+    if kind in {"authc", "authz", "acct"}:
+        files = [f for f in files if f.kind == kind]
+
+    if d_from is not None:
+        files = [f for f in files if f.log_date >= d_from]
+    if d_to is not None:
+        files = [f for f in files if f.log_date <= d_to]
+
+    # Sort: newest date first, then kind
+    files.sort(key=lambda f: (f.log_date, f.kind, f.filename), reverse=True)
+
+    # Pagination
+    try:
+        page = int(request.args.get("page", "1"))
+    except Exception:
+        page = 1
+    page = max(1, page)
+
+    per_page = 25
+    total = len(files)
+    # Use integer math to avoid float rounding and extra imports
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    if page > total_pages:
+        page = total_pages
+
+    start = (page - 1) * per_page
+    end = start + per_page
+    page_items = files[start:end]
+
+    # Prepare rows for template
+    rows = []
+    for f in page_items:
+        mtime_bkk = f.mtime_utc.astimezone(_BKK_TZ).strftime("%d/%m/%y %H:%M:%S")
+        rows.append(
+            {
+                "filename": f.filename,
+                "kind": f.kind,
+                "date": f.log_date.isoformat(),
+                "mtime": mtime_bkk,
+                "size": _fmt_bytes(f.size_bytes),
+            }
+        )
+
+    # Build page URLs while preserving filters
+    base_args = {k: v for k, v in request.args.items() if k != "page" and v is not None}
+
+    def page_url(p: int) -> str:
+        args = dict(base_args)
+        args["page"] = str(p)
+        return url_for("auth.admin_log_files", **args)
+
+    return render_template(
+        "admin_log_files.html",
+        active_page="admin_log_files",
+        delete_enabled=delete_enabled,
+        kind=kind,
+        date_from=date_from_s,
+        date_to=date_to_s,
+        rows=rows,
+        page=page,
+        total=total,
+        total_pages=total_pages,
+        pages=_build_page_numbers(page, total_pages),
+        page_url=page_url,
+    )
+
+
+@bp.route("/admin/log-files/delete", methods=["POST"])
+def admin_log_files_delete():
+    if not _is_superadmin():
+        abort(403)
+
+    from tacacs_dashboard.services.log_files import validate_basename
+    from tacacs_dashboard.services.log_sqlite import _env_bool
+
+    delete_enabled = bool(_env_bool("LOG_FILE_DELETE_ENABLED", default=False))
+    next_url = request.form.get("next") or url_for("auth.admin_log_files")
+
+    if not delete_enabled:
+        flash("Log delete is disabled (set LOG_FILE_DELETE_ENABLED=1 in secret.env)", "error")
+        return redirect(next_url)
+
+    filename = request.form.get("filename") or ""
+    confirm = (request.form.get("confirm") or "").strip()
+
+    try:
+        name = validate_basename(filename)
+    except Exception:
+        flash("Invalid log filename.", "error")
+        return redirect(next_url)
+
+    if confirm != "DELETE":
+        flash("Please type DELETE to confirm deletion.", "error")
+        return redirect(next_url)
+
+    # Prefer sudo helper so the web process does not need write access to /var/log.
+    # The helper itself enforces safe paths.
+    tool_path = (Path(__file__).resolve().parents[2] / "tools" / "delete_tacacs_log.py").resolve()
+    cmd = ["sudo", "-n", "/usr/bin/python3", str(tool_path), "--file", name]
+
+    try:
+        cp = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+    except Exception as e:
+        flash(f"Delete failed: {e}", "error")
+        return redirect(next_url)
+
+    if cp.returncode == 0:
+        flash(f"Deleted {name}. (DB cleanup will be reflected after next index run)", "success")
+        return redirect(next_url)
+
+    # Common sudo failure: not allowed / password required
+    out = (cp.stdout or "").strip()
+    err = (cp.stderr or "").strip()
+    if "password" in err.lower() or cp.returncode == 1 and "sudo" in err.lower():
+        flash(
+            "Delete failed: sudo is not permitted for the web user. Configure /etc/sudoers.d/tacacs-log-delete.",
+            "error",
+        )
+    else:
+        msg = err or out or f"exit={cp.returncode}"
+        flash(f"Delete failed: {msg}", "error")
+
+    return redirect(next_url)

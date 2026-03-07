@@ -23,6 +23,7 @@
            <a href="{{ url_for('terminal.terminal_page') }}" class="nav-item {% if active_page=='terminal' %}nav-item-active{% endif %}">Web Terminal</a>
            {% if is_superadmin %}
              <a href="{{ url_for('device_groups.index') }}" class="nav-item {% if active_page=='admin_groups' %}nav-item-active{% endif %}">Superadmin: Device Groups</a>
+            <a href="{{ url_for('auth.admin_log_files') }}" class="nav-item {% if active_page=='admin_log_files' %}nav-item-active{% endif %}">Superadmin: Log Files</a>
              <a href="{{ url_for('auth.web_users') }}" class="nav-item {% if active_page=='admin_users' %}nav-item-active{% endif %}">Superadmin: Web Accounts</a>
            {% endif %}
         </nav>

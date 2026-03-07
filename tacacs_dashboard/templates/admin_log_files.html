@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+
+{% block title %}Superadmin: Log Files | NT TACACS+{% endblock %}
+{% block header %}Superadmin: Log Files{% endblock %}
+
+{% block content %}
+<section class="section">
+  <h2 class="section-title">TACACS+ Daily Log Files on Disk</h2>
+
+  {# Server-side feedback (success/error) for delete actions #}
+  {% with msgs = get_flashed_messages(with_categories=true) %}
+    {% if msgs %}
+      <div style="margin: 12px 0;">
+        {% for cat, msg in msgs %}
+          {% if cat == 'success' %}
+            <div style="padding:10px 12px;border-radius:10px;background:#e9f7ef;color:#155724;border:1px solid #c3e6cb;margin-bottom:8px;">{{ msg }}</div>
+          {% elif cat == 'error' %}
+            <div style="padding:10px 12px;border-radius:10px;background:#fbeaea;color:#721c24;border:1px solid #f5c6cb;margin-bottom:8px;">{{ msg }}</div>
+          {% else %}
+            <div style="padding:10px 12px;border-radius:10px;background:#eef3ff;color:#0b2e6b;border:1px solid #cbd6ff;margin-bottom:8px;">{{ msg }}</div>
+          {% endif %}
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
+  <div class="note" style="margin-bottom: 12px;">
+    <div><b>Source:</b> <code>/var/log/tac_plus</code></div>
+    <div><b>Allowed files:</b> <code>authc/authz/acct-YYYY-MM-DD.log</code></div>
+    <div style="margin-top: 6px;">
+      Deleting log files affects what can be indexed and shown in the dashboard.
+      Database cleanup will be reflected after the next <b>FULL</b> index run (daily timer) or manual <code>tools/log_indexer.py --full</code>.
+    </div>
+    {% if not delete_enabled %}
+      <div style="margin-top: 8px;"><b>Delete is disabled.</b> Set <code>LOG_FILE_DELETE_ENABLED=1</code> in <code>secret.env</code> to enable.</div>
+    {% endif %}
+  </div>
+
+  <form method="get" class="card" style="padding: 14px;">
+    <div class="row" style="display:flex; gap: 12px; flex-wrap: wrap; align-items: end;">
+      <div style="min-width: 180px;">
+        <label class="label">Type</label>
+        <select name="kind" class="input">
+          <option value="" {% if not kind %}selected{% endif %}>-- All --</option>
+          <option value="authc" {% if kind=='authc' %}selected{% endif %}>authc</option>
+          <option value="authz" {% if kind=='authz' %}selected{% endif %}>authz</option>
+          <option value="acct" {% if kind=='acct' %}selected{% endif %}>acct</option>
+        </select>
+      </div>
+
+      <div style="min-width: 180px;">
+        <label class="label">Date From</label>
+        <input class="input" type="date" name="from" value="{{ date_from }}" />
+      </div>
+
+      <div style="min-width: 180px;">
+        <label class="label">Date To</label>
+        <input class="input" type="date" name="to" value="{{ date_to }}" />
+      </div>
+
+      <div>
+        <button class="btn btn-primary" type="submit">Apply</button>
+        <a class="btn" href="{{ url_for('auth.admin_log_files') }}">Reset</a>
+      </div>
+    </div>
+  </form>
+
+  <div class="card" style="margin-top: 14px;">
+    <div style="padding: 10px 14px; color: #666;">Showing {{ (rows|length) }} of {{ total }} (page {{ page }} / {{ total_pages }})</div>
+    <div style="overflow-x:auto;">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Type</th>
+            <th>Filename</th>
+            <th>Size</th>
+            <th>Modified (UTC+07)</th>
+            <th style="width: 280px;">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr>
+            <td>{{ r.date }}</td>
+            <td>{{ r.kind }}</td>
+            <td><code>{{ r.filename }}</code></td>
+            <td>{{ r.size }}</td>
+            <td>{{ r.mtime }}</td>
+            <td>
+              {% if delete_enabled %}
+                <form method="post" action="{{ url_for('auth.admin_log_files_delete') }}" style="display:flex; gap: 8px; align-items:center;">
+                  <input type="hidden" name="filename" value="{{ r.filename }}" />
+                  <input type="hidden" name="next" value="{{ request.full_path }}" />
+                  <input class="input" name="confirm" placeholder="Type DELETE" style="max-width: 140px;" />
+                  <button class="btn btn-danger" type="submit" onclick="return confirm('Delete {{ r.filename }} ?');">Delete</button>
+                </form>
+              {% else %}
+                <span style="color:#999;">Delete disabled</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+          {% if rows|length == 0 %}
+          <tr><td colspan="6" style="padding: 18px; color: #777;">No log files found for the selected filters.</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if total_pages > 1 %}
+    <div class="pagination" style="display:flex; justify-content: space-between; align-items:center; padding: 12px 14px;">
+      <div style="color:#666;">Total: {{ total }}</div>
+      <div style="display:flex; gap: 6px; align-items:center;">
+        <a class="btn" href="{{ page_url(1) }}" {% if page == 1 %}style="pointer-events:none;opacity:.5"{% endif %}>First</a>
+        <a class="btn" href="{{ page_url(page-1) }}" {% if page == 1 %}style="pointer-events:none;opacity:.5"{% endif %}>Prev</a>
+        {% for p in pages %}
+          <a class="btn" href="{{ page_url(p) }}" {% if p == page %}style="font-weight:700"{% endif %}>{{ p }}</a>
+        {% endfor %}
+        <a class="btn" href="{{ page_url(page+1) }}" {% if page == total_pages %}style="pointer-events:none;opacity:.5"{% endif %}>Next</a>
+        <a class="btn" href="{{ page_url(total_pages) }}" {% if page == total_pages %}style="pointer-events:none;opacity:.5"{% endif %}>Last</a>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="note" style="margin-top: 14px;">
+    <b>Server permission note</b>
+    <div style="margin-top: 6px;">
+      If delete fails with a sudo error, create a sudoers rule to allow the web user to run the helper without a password.
+      (Recommended: a dedicated entry in <code>/etc/sudoers.d/</code> allowing only <code>tools/delete_tacacs_log.py</code>.)
+    </div>
+  </div>
+</section>
+{% endblock %}
