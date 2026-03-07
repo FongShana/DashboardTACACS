@@ -1,6 +1,9 @@
 # tacacs_dashboard/routes/auth.py
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
 from flask import Blueprint, flash, redirect, render_template, request, session, url_for
 
 from ..services.web_users_store import (
@@ -21,6 +24,36 @@ from ..services.web_users_store import (
 from ..services.device_groups_store import list_device_groups
 
 bp = Blueprint("auth", __name__)
+
+
+_BKK_TZ = ZoneInfo("Asia/Bangkok")
+
+
+def _fmt_iso_to_bkk(value: str | None) -> str:
+    """Format ISO-like timestamps as Asia/Bangkok time for UI display.
+
+    Notes:
+      - Stored timestamps may be naive (no tz); treat them as UTC.
+      - If parsing fails, return the original string.
+    """
+
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+
+    try:
+        iso = raw
+        # Support trailing 'Z'
+        if iso.endswith("Z"):
+            iso = iso[:-1] + "+00:00"
+
+        dt = datetime.fromisoformat(iso)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        dt_bkk = dt.astimezone(_BKK_TZ)
+        return dt_bkk.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return raw
 
 
 def _is_superadmin() -> bool:
@@ -78,6 +111,10 @@ def web_users():
         flash("หน้านี้สำหรับผู้ดูแลระบบ (superadmin) เท่านั้น", "error")
         return redirect(url_for("dashboard.index"))
     users = list_users()
+    # Display timestamps in UTC+07 (Asia/Bangkok) for consistency with other pages.
+    for u in users:
+        if isinstance(u, dict):
+            u["created_at_bkk"] = _fmt_iso_to_bkk(u.get("created_at"))
     return render_template("web_users.html", users=users, active_page="admin_users")
 
 

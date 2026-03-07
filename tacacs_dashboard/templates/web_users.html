@@ -95,7 +95,7 @@
                   <span class="badge badge-neutral">{{ r }}</span>
                 {% endif %}
               </td>
-              <td class="small text-mono">{{ u.created_at if u.created_at is defined else u.get('created_at','-') }}</td>
+              <td class="small text-mono">{{ (u.created_at_bkk if u.created_at_bkk is defined else u.get('created_at_bkk','')) or (u.created_at if u.created_at is defined else u.get('created_at','-')) }}</td>
               <td>
                 {% if r == 'superadmin' %}
                   <span class="badge badge-success">All</span>

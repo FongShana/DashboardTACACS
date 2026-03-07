@@ -1,6 +1,6 @@
 import re
 import subprocess
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from flask import Blueprint, render_template, request, redirect, url_for, flash, session
 
 from tacacs_dashboard.services.policy_store import load_policy, update_policy
@@ -19,6 +19,45 @@ NAME_RE = re.compile(r"^[^\W\d_][\w\-\u0E31-\u0E4E]{2,31}$", re.UNICODE)
 def _now_iso() -> str:
     """Return ISO timestamp (seconds precision) for policy.json metadata fields."""
     return datetime.now().replace(microsecond=0).isoformat()
+
+
+# Display timezone for dashboard UI (Bangkok / UTC+07)
+_BKK_TZ = timezone(timedelta(hours=7))
+
+
+def _fmt_ts_bkk(ts: str | None) -> str | None:
+    """Format an ISO timestamp (stored in policy.json) as Bangkok time.
+
+    Notes:
+      - Existing metadata fields may be naive (no tzinfo). Treat them as UTC.
+      - If a tz offset exists, convert to UTC+07.
+    """
+    if not ts:
+        return None
+    s = (ts or "").strip()
+    if not s:
+        return None
+    # Support ISO with trailing 'Z'
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+
+    dt: datetime | None = None
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError:
+        # Fallback for legacy formats
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+            try:
+                dt = datetime.strptime(s, fmt)
+                break
+            except ValueError:
+                dt = None
+
+    if dt is None:
+        return ts
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(_BKK_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 def _is_valid_ipv4(ip: str) -> bool:
     parts = ip.split(".")
@@ -163,6 +202,12 @@ def index():
             ui["status_hint"] = "Not bootstrapped"
         else:
             ui["status"] = status_label(get_olt_status(ip))
+
+        # Display timestamps in Bangkok timezone
+        if ui.get("created_at"):
+            ui["created_at"] = _fmt_ts_bkk(ui.get("created_at")) or ui.get("created_at")
+        if ui.get("updated_at"):
+            ui["updated_at"] = _fmt_ts_bkk(ui.get("updated_at")) or ui.get("updated_at")
 
         devices_ui.append(ui)
 
