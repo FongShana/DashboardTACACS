@@ -71,8 +71,20 @@ def build_bootstrap_commands(
 
         x,      # exit system-user
 
+        f"command-authorization 1 {aaa_id}",
+        f"command-authorization 2 {aaa_id}",
+        f"command-authorization 3 {aaa_id}",
+        f"command-authorization 4 {aaa_id}",
         f"command-authorization 5 {aaa_id}",
+        f"command-authorization 6 {aaa_id}",
         f"command-authorization 7 {aaa_id}",
+        f"command-authorization 8 {aaa_id}",
+        f"command-authorization 9 {aaa_id}",
+        f"command-authorization 10 {aaa_id}",
+        f"command-authorization 11 {aaa_id}",
+        f"command-authorization 12 {aaa_id}",
+        f"command-authorization 13 {aaa_id}",
+        f"command-authorization 14 {aaa_id}",
 
         "end",  # leave config mode
     ]
