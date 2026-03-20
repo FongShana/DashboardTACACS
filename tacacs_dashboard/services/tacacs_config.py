@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 
 from .policy_store import load_policy
-from .user_secrets_store import get_user_password
+from .user_secrets_store import get_user_password_spec
 from .privilege import parse_privilege
 
 # โฟลเดอร์ฐานของโปรเจกต์ (ที่มี policy.json, secret.env, pass.secret)
@@ -31,10 +31,6 @@ def _read_env(key: str, default: str = "") -> str:
 
 def load_shared_key() -> str:
     return _read_env("TACACS_SHARED_KEY", "CHANGE_ME") or "CHANGE_ME"
-
-
-def load_default_user_password() -> str:
-    return _read_env("DEFAULT_USER_PASSWORD", "test") or "test"
 
 
 def load_enable15_password() -> str:
@@ -106,8 +102,6 @@ def build_pass_secret_text() -> str:
     policy = load_policy()
     users = policy.get("users", [])
 
-    default_pw = load_default_user_password()
-
     lines: list[str] = []
 
     for u in users:
@@ -129,12 +123,19 @@ def build_pass_secret_text() -> str:
         )
         role = str(role).strip() or "OLT_VIEW"
 
-        # NOTE: get_user_password() already falls back to default password.
+        # NOTE: get_user_password_spec() already falls back to the default credential.
         # IMPORTANT: do not call ensure_user_has_password() here (apply path).
-        pw = (get_user_password(username) or "").strip() or default_pw
+        pw_kind, pw_value = get_user_password_spec(username)
+        pw_kind = (pw_kind or "clear").strip().lower()
+        pw_value = (pw_value or "").strip()
+        if not pw_value:
+            raise ValueError(f"No password configured for user '{username}' and no default password is available")
 
         lines.append(f"user {username} {{")
-        lines.append(f'  password login = clear "{_escape(pw)}"')
+        if pw_kind == "clear":
+            lines.append(f'  password login = clear "{_escape(pw_value)}"')
+        else:
+            lines.append(f"  password login = {pw_kind} {pw_value}")
         lines.append("  password pap = login")
         lines.append(f"  member = {role}")
         lines.append("}")
